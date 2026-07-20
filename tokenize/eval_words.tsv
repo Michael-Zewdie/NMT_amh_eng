@@ -1,0 +1,43 @@
+# Gold morphological evaluation set (demo scale — replace/extend for real decisions).
+# Columns (tab-separated):
+#   surface_word <TAB> gold_segmentation ('|' between morphs, '-' if none) <TAB> complete (1 = every true
+#   boundary in fidel space is annotated; 0 = partial, only listed boundaries are gold) <TAB> root radicals
+#   (consonant skeleton as fidels, '-' if not a root-and-pattern item)
+#
+# Gold boundaries are annotated ONLY where the morpheme junction falls on a clean fidel boundary.
+# Fused junctions (e.g. ቤቱ = ቤት + ኡ, where the vowel suffix merges into the final fidel) cannot be
+# expressed in grapheme space; such items are marked complete=0 with only their clean boundaries listed.
+በቤት	በ|ቤት	1	-
+በከተማ	በ|ከተማ	1	-
+ከከተማ	ከ|ከተማ	1	-
+ስለኢትዮጵያ	ስለ|ኢትዮጵያ	1	-
+እንደገና	እንደ|ገና	1	-
+ተማሪዎች	ተማሪ|ዎች	1	-
+መኪናዎች	መኪና|ዎች	1	-
+አልሄደም	አል|ሄደ|ም	1	ህድ
+የሰማይ	የ|ሰማይ	1	-
+ውሻው	ውሻ|ው	1	-
+ዜናውን	ዜና|ው|ን	1	-
+ነገረው	ነገረ|ው	1	ንግር
+ወሰድኩ	ወሰድ|ኩ	1	ውስድ
+መስበር	መ|ስበር	1	ስብር
+መጻፍ	መ|ጻፍ	1	ጽፍ
+መንገር	መ|ንገር	1	ንግር
+መስማት	መ|ስማ|ት	1	ስም
+መሄድ	መ|ሄድ	1	ህድ
+ተሰበረ	ተ|ሰበረ	1	ስብር
+ሰማን	ሰማ|ን	1	ስም
+ጻፈች	ጻፈ|ች	1	ጽፍ
+ይሰብራል	ይ|ሰብራል	0	ስብር
+ይከፍታል	ይ|ከፍታል	0	ክፍት
+ይፈልጋል	ይ|ፈልጋል	0	ፍልግ
+እፈልጋለሁ	እ|ፈልጋለሁ	0	ፍልግ
+ትነግራለች	ት|ነግራለች	0	ንግር
+በሩን	በሩ|ን	0	-
+መስኮቱን	መስኮቱ|ን	0	-
+ድመቷን	ድመቷ|ን	0	-
+ሰበረ	-	0	ስብር
+ሰማ	-	0	ስም
+ሄዱ	-	0	ህድ
+ወሰደ	-	0	ውስድ
+ክፍት	-	0	ክፍት

@@ -1,0 +1,9 @@
+# Data — 5.6 GB of raw/generated material; regenerable via the collect/ + process/ scripts.
+data/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
