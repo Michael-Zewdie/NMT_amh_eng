@@ -21,6 +21,7 @@ processing/     stages process.py calls
     filters.py      length / script-purity / dedupe row drops + clean()
   pool.py       apply quality cutoffs, pool every source + 80/10/10 split
   score_labse.py    annotate LaBSE cosine (labse_score)
+  score_africomet.py annotate AfriCOMET-QE (africomet_score)
   score_lid.py      annotate fastText LID (source_lid / target_lid)
   score_cache.py    content-keyed cache so scores survive a re-clean
   remove_domain.py  drop rows from named source domains
@@ -33,7 +34,7 @@ data/
                 nllb_full/ (the mined parquet)
   csv/          per-source cleaned CSVs, nllb.csv, lengthdist.json
     figs/       generated charts (length_buckets_pie.png, nllb_domains_bar.png)
-  scores/       cached LaBSE/LID scores, keyed by sentence content
+  scores/       cached LaBSE/AfriCOMET/LID scores, keyed by sentence content
   final/        train / validation / test splits
 ```
 
@@ -52,8 +53,9 @@ python -m collection.collect --force   # rebuild everything regardless
 
 # 2. Process — one command cleans every source (NLLB first) → data/processed/ → data/final/
 python process.py                     # config + toggles live at the top of the file
-# (score_labse, score_lid, pool, length_dist run as toggled stages inside process.py;
-#  remove_domain is a standalone manual tool: python -m processing.remove_domain <domain> …)
+# (score_labse, score_africomet, score_lid, pool, length_dist run as toggled stages
+#  inside process.py; remove_domain is a standalone manual tool:
+#  python -m processing.remove_domain <domain> …)
 
 # Retuning a cutoff? Just edit COSINE_CUTOFF / *_LID_CUTOFF and re-run `python process.py`.
 # The score stages hit the data/scores/ cache, never load a model, and only pool re-runs.
@@ -80,4 +82,5 @@ Paths are never hardcoded per-script — every script imports what it needs from
 ## Dependencies
 
 `polars`, `pandas`, `numpy`, `matplotlib`, `torch`, `sentence-transformers`,
-`datasets`, `pyarrow`, `tldextract`.
+`datasets`, `pyarrow`, `tldextract`, `unbabel-comet` (AfriCOMET-QE; pins
+`numpy<2.0`, which downgrades numpy but hasn't broken fasttext in practice).

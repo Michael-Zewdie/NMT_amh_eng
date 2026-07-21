@@ -13,9 +13,9 @@ Adjust the CONFIG block, then run (from the project root):
 
     python process.py
 
-Stage order: clean csv_raw/*.csv → [score_labse] → [score_lid] → pool → length_dist.
+Stage order: clean csv_raw/*.csv → [score_labse] → [score_africomet] → [score_lid] → pool → length_dist.
 
-Scoring and filtering are separate. score_labse/score_lid only *annotate*
+Scoring and filtering are separate. score_labse/score_africomet/score_lid only *annotate*
 data/processed/, caching every score by sentence content; the cutoffs below are
 applied at the pool stage. So retuning a threshold means re-running with
 RUN_CLEAN/RUN_LABSE/RUN_LID left on — the models never load, every score comes from
@@ -30,6 +30,7 @@ from processing.clean.filters import clean
 # Quality floors — applied at the pool stage, so changing one is a cheap re-run
 # (scores are cached; no model reloads). 0.0 disables a cutoff.
 COSINE_CUTOFF   = .7               # non-NLLB LaBSE cosine threshold
+AFRICOMET_CUTOFF = .5              # AfriCOMET-QE adequacy/fluency floor (placeholder — needs tuning)
 SOURCE_LID_CUTOFF = .90            # Amharic LID confidence floor
 TARGET_LID_CUTOFF = .90            # English LID confidence floor
 SEED            = 42                # shuffle / split seed
@@ -43,6 +44,7 @@ CSV_SOURCES = sorted(CSV_RAW.glob("*.csv"))
 # ── STAGE TOGGLES ──────────────────────────────────────────────────────────────
 RUN_CLEAN         = True            # clean csv_raw/*.csv → data/processed/
 RUN_LABSE         = False            # annotate labse_score (cached; slow only on unseen text)
+RUN_AFRICOMET     = False            # annotate africomet_score (cached; slow only on unseen text)
 RUN_LID           = False            # annotate source_lid/target_lid (cached; slow only on unseen text)
 RUN_POOL          = True            # apply the cutoffs, pool every source + split → data/final/ (+ always regenerates the length-dist chart)
 # ────────────────────────────────────────────────────────────────────────────────
@@ -62,12 +64,24 @@ def main() -> None:
         for f in CSV_SOURCES:
             df = pl.read_csv(f, infer_schema_length=0)  # all-string, like pandas dtype=str
             print(f"[{f.stem}] input: {df.height}")
-            clean(df, f.stem, "am", "en", AMH_LEN, ENG_LEN).write_csv(PROCESSED / f.name)
+            # nllb.csv is noisy mined bitext — one Amharic sentence can turn up matched
+            # to several English strings of varying mining quality, so am-only dedupe
+            # (keep the first/only row) is the right call. The curated sources can carry
+            # genuine multi-reference translations of the same sentence — quran.csv alone
+            # has up to ~46 independent translator versions per verse — so dropping a row
+            # there requires both sides to match, not just the Amharic.
+            dedupe_keys = ("am",) if f.stem == "nllb" else ("am", "en")
+            clean(df, f.stem, "am", "en", AMH_LEN, ENG_LEN, dedupe_keys=dedupe_keys).write_csv(PROCESSED / f.name)
 
     if RUN_LABSE:
         banner("score_labse — annotate LaBSE cosine (cached)")
         from processing.utils import score_labse
         score_labse.main()
+
+    if RUN_AFRICOMET:
+        banner("score_africomet — annotate AfriCOMET-QE africomet_score (cached)")
+        from processing.utils import score_africomet
+        score_africomet.main()
 
     if RUN_LID:
         banner("score_lid — annotate fastText LID source_lid/target_lid (cached)")
@@ -79,6 +93,7 @@ def main() -> None:
         from processing.utils import pool
         pool.main(split_ratios=SPLIT, seed=SEED,
                   cosine_cutoff=COSINE_CUTOFF,
+                  africomet_cutoff=AFRICOMET_CUTOFF,
                   source_lid_cutoff=SOURCE_LID_CUTOFF,
                   target_lid_cutoff=TARGET_LID_CUTOFF)
 

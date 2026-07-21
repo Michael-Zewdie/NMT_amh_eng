@@ -67,18 +67,22 @@ _LABIALIZATION_MAP = {
 _LABIALIZATION_FROM = list(_LABIALIZATION_MAP.keys())
 _LABIALIZATION_TO = list(_LABIALIZATION_MAP.values())
 
-# Ge'ez/Ethiopic punctuation plus non-ASCII quote marks present in the corpus →
-# their Latin equivalent. amh only.
+# Latin punctuation → its Ge'ez/Ethiopic equivalent, so the Amharic column ends up
+# with Ethiopic punctuation only. Native Ethiopic marks already in the text (፠, ።,
+# ፦, ፨, …) are left untouched — this only rewrites the Latin marks that leak in
+# from typing/OCR. Where several Ethiopic marks could map to one Latin character
+# (., : each had two candidates), we pick the common one (። full stop, ፥ colon);
+# the rarer stylistic marks (፠ section, ፨ paragraph separator, ፦ preface colon)
+# simply aren't produced by this map, though they pass through unchanged if
+# already present. Wordspace (፡→space) and quote-mark cleanup (‹›′«»→"/') aren't
+# true punctuation pairs, so they stay pointed at their ASCII/plain form.
 _PUNCTUATION_MAP = {
-    "፠": ".",  # ETHIOPIC SECTION MARK
     "፡": " ",  # ETHIOPIC WORDSPACE
-    "።": ".",  # ETHIOPIC FULL STOP
-    "፣": ",",  # ETHIOPIC COMMA
-    "፤": ";",  # ETHIOPIC SEMICOLON
-    "፥": ":",  # ETHIOPIC COLON
-    "፦": ":",  # ETHIOPIC PREFACE COLON
-    "፧": "?",  # ETHIOPIC QUESTION MARK
-    "፨": ".",  # ETHIOPIC PARAGRAPH SEPARATOR
+    ".": "።",  # → ETHIOPIC FULL STOP
+    ",": "፣",  # → ETHIOPIC COMMA
+    ";": "፤",  # → ETHIOPIC SEMICOLON
+    ":": "፥",  # → ETHIOPIC COLON
+    "?": "፧",  # → ETHIOPIC QUESTION MARK
     "‹": '"',  # SINGLE LEFT-POINTING ANGLE QUOTATION MARK
     "›": '"',  # SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
     "′": "'",  # PRIME (used as apostrophe in this corpus)
@@ -88,14 +92,24 @@ _PUNCTUATION_MAP = {
 _PUNCTUATION_FROM = list(_PUNCTUATION_MAP.keys())
 _PUNCTUATION_TO = list(_PUNCTUATION_MAP.values())
 
+# Two (or more) ETHIOPIC WORDSPACE marks in a row is the traditional full-stop
+# convention that predates the precomposed ። (ETHIOPIC FULL STOP) character —
+# a single ፡ is just the word-separator, but ፡፡ ends a sentence. OCR/typing often
+# introduces a stray space between the two (፡ ፡), so this tolerates whitespace
+# between repeats. Must run before the punctuation step below, which maps a lone
+# ፡ to a plain space — by then the doubled pattern would already be gone.
+_DOUBLE_WORDSPACE_RE = r"(?:፡\s*){2,}"
+
 
 def normalize(df: pl.DataFrame, am_col: str = "am", en_col: str = "en",
               name: str | None = None) -> pl.DataFrame:
     """Full text normalization applied to both languages / all sources.
 
     Both columns: NFC-normalize + strip. Amharic column only: collapse labialized
-    fidels, merge homophone fidel series, map Ge'ez punctuation to Latin, and
-    collapse whitespace runs. Order is fixed (labialization before homophone).
+    fidels, merge homophone fidel series, collapse doubled wordspace marks (፡፡) to
+    a full stop, map stray Latin punctuation to Ge'ez, and collapse whitespace
+    runs. Order is fixed (labialization before homophone; doubled-wordspace before
+    the punctuation step, which would otherwise erase it one mark at a time).
 
     If `name` is given, logs per-step how many rows each step *modified* (a row
     counts once even if several of its columns changed), with a percentage of the
@@ -109,6 +123,7 @@ def normalize(df: pl.DataFrame, am_col: str = "am", en_col: str = "en",
         )),
         ("labialization", (am_col,), (pl.col(am_col).str.replace_many(_LABIALIZATION_FROM, _LABIALIZATION_TO),)),
         ("homophone",     (am_col,), (pl.col(am_col).str.replace_many(_HOMOPHONE_FROM, _HOMOPHONE_TO),)),
+        ("double_wordspace", (am_col,), (pl.col(am_col).str.replace_all(_DOUBLE_WORDSPACE_RE, "። "),)),
         ("punctuation",   (am_col,), (pl.col(am_col).str.replace_many(_PUNCTUATION_FROM, _PUNCTUATION_TO),)),
         ("whitespace",    (am_col,), (pl.col(am_col).str.replace_all(r"\s+", " ").str.strip_chars(),)),
     ]

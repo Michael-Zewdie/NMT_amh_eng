@@ -15,7 +15,11 @@ data/processed/, so LaBSE always embeds normalized text.
 
 Run (from the project root): python -m processing.utils.score_labse
 
-nllb.csv (its own laser_score) is skipped.
+laser_score and labse_score are the same kind of thing — semantic alignment
+quality — just produced by different pipelines (Meta's mining vs. a local LaBSE
+embed). A row that already carries laser_score (nllb.csv) doesn't need labse_score
+too, so score_cache.scored() skips those rows via skip_where rather than this file
+hardcoding nllb.csv by name.
 """
 import numpy as np
 import pandas as pd
@@ -52,19 +56,16 @@ def labse_similarity(df: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> None:
     """Add labse_score to every am/en CSV in data/processed/, writing back in place;
-    skip non-corpus files (nllb.csv)."""
+    skip non-corpus files (by columns) and rows that already carry laser_score
+    (by content, via score_cache's skip_where)."""
     annotated = 0
     for p in sorted(PROCESSED.glob("*.csv")):
-        # nllb.csv is scored by its own laser_score, not LaBSE; other non-am/en
-        # files (e.g. website-stats) are skipped by their columns.
-        if p.name == "nllb.csv":
-            continue
         df = pd.read_csv(p, dtype=str)
         if not {"am", "en"}.issubset(df.columns):
             print(f"[labse] skipping {p.name} (not am/en parallel text)")
             continue
         print(f"[labse] scoring {p.name}: {len(df)} rows")
-        df = scored(df, "labse", ["labse_score"], labse_similarity)
+        df = scored(df, "labse", ["labse_score"], labse_similarity, skip_where="laser_score")
         df.to_csv(p, index=False)
         annotated += 1
     print(f"\n[labse] annotated {annotated} source(s) → {PROCESSED}")

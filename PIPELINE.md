@@ -28,15 +28,18 @@ flowchart TD
     %% ---------------- optional in-place annotate passes (never drop rows) ----------------
     PN -. "RUN_LABSE (non-NLLB)" .-> LAB["score_labse<br/>annotate labse_score"]
     LAB -. rewrite .-> PN
+    PN -. "RUN_AFRICOMET (every source)" .-> AFR["score_africomet<br/>annotate africomet_score"]
+    AFR -. rewrite .-> PN
     PN -. "RUN_LID (non-NLLB)" .-> LID["score_lid<br/>annotate source_lid / target_lid"]
     LID -. rewrite .-> PN
     LAB <-. hit/miss .-> SC[("data/scores/*.parquet<br/>content-keyed score cache")]
+    AFR <-. hit/miss .-> SC
     LID <-. hit/miss .-> SC
     PN -. "manual / standalone" .-> RD["remove_domain<br/>drop NLLB source domains"]
     RD -. rewrite .-> PN
 
     %% ---------------- pool + stratified split ----------------
-    PN --> POOL["pool · RUN_POOL<br/>apply COSINE_CUTOFF + LID floors<br/>concat → cross-source dedupe (am) → shuffle<br/>→ length-stratified 80/10/10"]
+    PN --> POOL["pool · RUN_POOL<br/>apply COSINE_CUTOFF + AFRICOMET_CUTOFF + LID floors<br/>concat → cross-source dedupe (am) → shuffle<br/>→ length-stratified 80/10/10"]
     POOL --> TR[("data/final/train.csv")]
     POOL --> VA[("data/final/validation.csv")]
     POOL --> TE[("data/final/test.csv")]
@@ -88,16 +91,21 @@ cutoffs from `nmt/lengths.py`, so the reported distribution and the split match.
 - **`process.py` cleans every `csv_raw/*.csv` uniformly** through one shared
   `clean()` (normalize → length → script_purity → dedupe-on-`am`), so the whole
   corpus — including NLLB — is normalized identically.
-- **`pool`** applies the quality cutoffs (`COSINE_CUTOFF`, the two LID floors — each
-  on the sources that carry that score column), concatenates, dedups on `am` (one
-  English per Amharic sentence), then splits 80/10/10 **stratified by Amharic length
-  bucket**, so every split carries the same short/medium/long proportions. Each `am`
-  is unique after dedup, so no Amharic sentence leaks across train/val/test.
-- **`score_labse`** and **`score_lid`** are optional in-place passes (dashed) that
-  only *annotate* the non-NLLB CSVs — `labse_score` from LaBSE cosine, and
+- **`pool`** applies the quality cutoffs (`COSINE_CUTOFF`, `AFRICOMET_CUTOFF`, the
+  two LID floors — each on the sources that carry that score column), concatenates,
+  dedups on `am` (one English per Amharic sentence), then splits 80/10/10
+  **stratified by Amharic length bucket**, so every split carries the same
+  short/medium/long proportions. Each `am` is unique after dedup, so no Amharic
+  sentence leaks across train/val/test.
+- **`score_labse`**, **`score_africomet`**, and **`score_lid`** are optional
+  in-place passes (dashed) that only *annotate*, never drop a row. `score_labse`
+  and `score_lid` only cover the non-NLLB CSVs — `labse_score` from LaBSE cosine
+  (skipped where `laser_score` already gates the same thing), and
   `source_lid`/`target_lid` from the *same* fastText model (Meta's lid218e) NLLB
-  scored its own pairs with, so a non-NLLB row carries LID confidences directly
-  comparable to an NLLB row. Neither drops a row; the cutoffs live at the pool stage.
+  scored its own pairs with. `score_africomet` covers *every* source including
+  `nllb.csv`: `africomet_score` (AfriCOMET-QE, reference-free adequacy/fluency) is
+  a different signal than LASER's mining margin, so it isn't skipped there. All
+  cutoffs live at the pool stage.
 - **Scoring is separate from filtering, on purpose.** The models cost hours; a cutoff
   costs a comparison. Every score is cached in `data/scores/*.parquet` keyed by a
   hash of the sentence pair, so it survives a re-clean and is shared across sources.

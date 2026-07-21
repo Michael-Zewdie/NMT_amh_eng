@@ -55,21 +55,39 @@ def _load(name: str, score_cols: list[str]) -> pd.DataFrame:
 
 
 def scored(df: pd.DataFrame, name: str, score_cols: list[str], compute,
-           key_cols: tuple[str, ...] = ("am", "en")) -> pd.DataFrame:
+           key_cols: tuple[str, ...] = ("am", "en"),
+           skip_where: str | None = None) -> pd.DataFrame:
     """Return `df` with `score_cols` attached, computing only the uncached rows.
 
     `compute(frame)` must take a frame of unscored rows and return it with
     `score_cols` filled — it is called once, with every cache miss across the
     frame, and skipped entirely when everything hits. That skip is what keeps a
     cutoff change cheap: the model never loads.
+
+    `skip_where`, if given, names a column that marks a row as already covered by
+    an *equivalent* score (e.g. nllb.csv's laser_score plays the same role as
+    labse_score — both gate semantic alignment quality, so a row that already
+    carries one doesn't need the model run for the other). Rows where that column
+    is non-null are left out of the cache lookup and the compute() call entirely;
+    they come back with `score_cols` unset (NaN) rather than a fabricated value,
+    since the two scores aren't on the same scale.
     """
     keys = row_keys(df, key_cols)
     cache = _load(name, score_cols)
 
+    eligible = df.index
+    if skip_where is not None and skip_where in df.columns:
+        has_equivalent = df[skip_where].notna()
+        if has_equivalent.any():
+            print(f"[cache] {name}: {int(has_equivalent.sum())} row(s) already carry "
+                  f"{skip_where} — treated as equivalent, not scored")
+        eligible = df.index[~has_equivalent]
+
+    eligible_keys = keys.loc[eligible]
     # One compute per *distinct* miss: a sentence repeated across rows is scored once.
-    misses = keys[~keys.isin(cache.index) & ~keys.duplicated()]
-    hits = int(keys.isin(cache.index).sum())
-    print(f"[cache] {name}: {hits}/{len(df)} rows hit cache, "
+    misses = eligible_keys[~eligible_keys.isin(cache.index) & ~eligible_keys.duplicated()]
+    hits = int(eligible_keys.isin(cache.index).sum())
+    print(f"[cache] {name}: {hits}/{len(eligible_keys)} eligible rows hit cache, "
           f"{len(misses)} distinct row(s) to score")
 
     if len(misses):

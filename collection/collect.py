@@ -39,7 +39,7 @@ from datasets import load_dataset
 from processing.utils.paths import CSV_RAW, LOCAL, NLLB_FULL
 
 # NLLB laser_score threshold: 1.1 keeps the top ~1.5% (~425k of 16.1M pairs).
-LASER_CUTOFF = 1.06
+LASER_CUTOFF = 1.05
 # fastText LID (lid218e) confidence floors, mirrored on the non-NLLB side by
 # processing.utils.score_lid. source = Amharic (amh_Ethi), target = English
 # (eng_Latn). NLLB pre-filtered target_lid >= 0.95; source_lid has a noisy tail
