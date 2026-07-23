@@ -17,11 +17,13 @@ from processing.clean.normalize import normalize
 # punctuation is not — processing.clean.normalize maps Latin punctuation on the
 # Amharic side to its Ethiopic equivalent, so a stray Latin mark there means
 # normalize didn't cover it (or it's genuinely mixed-script) rather than something
-# to pass through. The one deliberate exception is quotes: normalize leaves ‹›′«»
-# collapsed to ASCII "/' on *both* sides, so those two chars stay allowed on the
+# to pass through. The exceptions are quotes and parens: normalize leaves ‹›′«»
+# collapsed to ASCII "/' on *both* sides, and parens are genuine Amharic content
+# (parenthetical clarifications/citations in quran.csv/gezmu.csv) gated by
+# paren_balance rather than dropped outright here, so both stay allowed on the
 # Amharic side too.
 _ASCII_PUNCT = re.escape(string.punctuation)
-_AMH_ALLOWED_PUNCT = re.escape("\"'")
+_AMH_ALLOWED_PUNCT = re.escape("\"'()")
 _DIGITS_SPACE = r"0-9\s"
 _AMH_DISALLOWED = f"[^ሀ-፿{_AMH_ALLOWED_PUNCT}{_DIGITS_SPACE}]"
 _ENG_DISALLOWED = f"[^A-Za-z{_ASCII_PUNCT}{_DIGITS_SPACE}]"

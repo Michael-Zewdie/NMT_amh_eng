@@ -13,7 +13,7 @@ Adjust the CONFIG block, then run (from the project root):
 
     python process.py
 
-Stage order: clean csv_raw/*.csv → [score_labse] → [score_africomet] → [score_lid] → pool → length_dist.
+Stage order: clean csv_raw/*.csv → [score_labse] → [score_africomet] → [score_lid] → [embed_english] → pool → length_dist.
 
 Scoring and filtering are separate. score_labse/score_africomet/score_lid only *annotate*
 data/processed/, caching every score by sentence content; the cutoffs below are
@@ -30,22 +30,24 @@ from processing.clean.filters import clean
 # Quality floors — applied at the pool stage, so changing one is a cheap re-run
 # (scores are cached; no model reloads). 0.0 disables a cutoff.
 COSINE_CUTOFF   = .7               # non-NLLB LaBSE cosine threshold
-AFRICOMET_CUTOFF = .5              # AfriCOMET-QE adequacy/fluency floor (placeholder — needs tuning)
+AFRICOMET_CUTOFF = .65              # AfriCOMET-QE adequacy/fluency floor (placeholder — needs tuning)
 SOURCE_LID_CUTOFF = .90            # Amharic LID confidence floor
 TARGET_LID_CUTOFF = .90            # English LID confidence floor
 SEED            = 42                # shuffle / split seed
 AMH_LEN         = (5, 500)          # (min, max) chars kept, Amharic side
 ENG_LEN         = (10, 500)         # (min, max) chars kept, English side
 SPLIT           = (0.8, 0.1, 0.1)   # train / validation / test ratios
+N_CLUSTERS      = 20                # semantic-cluster stratification axis (see dist.clusters)
 
 # Every CSV to clean (collect.py put them all here, nllb.csv included).
 CSV_SOURCES = sorted(CSV_RAW.glob("*.csv"))
 
 # ── STAGE TOGGLES ──────────────────────────────────────────────────────────────
 RUN_CLEAN         = True            # clean csv_raw/*.csv → data/processed/
-RUN_LABSE         = False            # annotate labse_score (cached; slow only on unseen text)
-RUN_AFRICOMET     = False            # annotate africomet_score (cached; slow only on unseen text)
-RUN_LID           = False            # annotate source_lid/target_lid (cached; slow only on unseen text)
+RUN_LABSE         = True            # annotate labse_score (cached; slow only on unseen text)
+RUN_AFRICOMET     = True            # annotate africomet_score (cached; slow only on unseen text)
+RUN_LID           = True            # annotate source_lid/target_lid (cached; slow only on unseen text)
+RUN_EMBED_ENGLISH = False            # warm the BGE-large-en-v1.5 embedding cache for semantic clustering (cached; slow only on unseen text)
 RUN_POOL          = True            # apply the cutoffs, pool every source + split → data/final/ (+ always regenerates the length-dist chart)
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -88,6 +90,11 @@ def main() -> None:
         from processing.utils import score_lid
         score_lid.main()
 
+    if RUN_EMBED_ENGLISH:
+        banner("embed_english — warm the BGE-large-en-v1.5 embedding cache (cached)")
+        from processing.utils import embed_english
+        embed_english.main()
+
     if RUN_POOL:
         banner(f"pool — cutoffs + merge all sources + {SPLIT} split")
         from processing.utils import pool
@@ -95,7 +102,8 @@ def main() -> None:
                   cosine_cutoff=COSINE_CUTOFF,
                   africomet_cutoff=AFRICOMET_CUTOFF,
                   source_lid_cutoff=SOURCE_LID_CUTOFF,
-                  target_lid_cutoff=TARGET_LID_CUTOFF)
+                  target_lid_cutoff=TARGET_LID_CUTOFF,
+                  n_clusters=N_CLUSTERS)
 
         # A pool run always refreshes the length-distribution report + pie chart,
         # so the reported buckets match the split that just used them.

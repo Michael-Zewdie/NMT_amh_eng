@@ -33,36 +33,36 @@ _HOMOPHONE_TO = list(_HOMOPHONE_MAP.values())
 # the single precomposed glyph, e.g. ልዋ -> ሏ. Must run before the homophone
 # merge, since that step merges ኅ (used here in ኅዋ->ኋ) away.
 _LABIALIZATION_MAP = {
-    "ሉዋአ": "ሏ",  # LU  + WAA → LWA
-    "ሑዋአ": "ሗ",  # HHU + WAA → HHWA  (ሐ-series)
-    "ሙዋአ": "ሟ",  # MU  + WAA → MWA
-    "ሡዋአ": "ሧ",  # SZU + WAA → SZWA  (ሠ-series, non-standard Amharic)
-    "ሩዋአ": "ሯ",  # RU  + WAA → RWA
-    "ሱዋአ": "ሷ",  # SU  + WAA → SWA
-    "ሹዋአ": "ሿ",  # SHU + WAA → SHWA
-    "ቡዋአ": "ቧ",  # BU  + WAA → BWA
-    "ቩዋአ": "ቯ",  # VU  + WAA → VWA
-    "ቱዋአ": "ቷ",  # TU  + WAA → TWA
-    "ቹዋአ": "ቿ",  # CU  + WAA → CWA
-    "ኑዋአ": "ኗ",  # NU  + WAA → NWA
-    "ኙዋአ": "ኟ",  # NYU + WAA → NYWA
-    "ዙዋአ": "ዟ",  # ZU  + WAA → ZWA
-    "ዡዋአ": "ዧ",  # ZHU + WAA → ZHWA
-    "ዱዋአ": "ዷ",  # DU  + WAA → DWA
-    "ዹዋአ": "ዿ",  # DDU + WAA → DDWA  (ዸ-series, non-Amharic)
-    "ጁዋአ": "ጇ",  # JU  + WAA → JWA
-    "ጡዋአ": "ጧ",  # THU + WAA → THWA
-    "ጩዋአ": "ጯ",  # CHU + WAA → CHWA
-    "ጱዋአ": "ጷ",  # PHU + WAA → PHWA
-    "ጹዋአ": "ጿ",  # TSU + WAA → TSWA
-    "ፉዋአ": "ፏ",  # FU  + WAA → FWA
-    "ፑዋአ": "ፗ",  # PU  + WAA → PWA
-    "ቁዋአ": "ቋ",  # QU  + WAA → QWAA
-    "ቑዋአ": "ቛ",  # QHU + WAA → QHWAA (ቐ-series, non-Amharic)
-    "ኁዋአ": "ኋ",  # XU  + WAA → XWAA
-    "ኩዋአ": "ኳ",  # KU  + WAA → KWAA
-    "ኹዋአ": "ዃ",  # KXU + WAA → KXWAA (ኸ-series, non-Amharic)
-    "ጉዋአ": "ጓ",  # GU  + WAA → GWAA
+    "ልዋ": "ሏ",  # L  + WAA → LWA
+    "ሕዋ": "ሗ",  # HH + WAA → HHWA  (ሐ-series)
+    "ምዋ": "ሟ",  # M  + WAA → MWA
+    "ሥዋ": "ሧ",  # SZ + WAA → SZWA  (ሠ-series, non-standard Amharic)
+    "ርዋ": "ሯ",  # R  + WAA → RWA
+    "ስዋ": "ሷ",  # S  + WAA → SWA
+    "ሽዋ": "ሿ",  # SH + WAA → SHWA
+    "ብዋ": "ቧ",  # B  + WAA → BWA
+    "ቭዋ": "ቯ",  # V  + WAA → VWA
+    "ትዋ": "ቷ",  # T  + WAA → TWA
+    "ችዋ": "ቿ",  # CH + WAA → CHWA
+    "ንዋ": "ኗ",  # N  + WAA → NWA
+    "ኝዋ": "ኟ",  # NY + WAA → NYWA
+    "ዝዋ": "ዟ",  # Z  + WAA → ZWA
+    "ዥዋ": "ዧ",  # ZH + WAA → ZHWA
+    "ድዋ": "ዷ",  # D  + WAA → DWA
+    "ዽዋ": "ዿ",  # DD + WAA → DDWA  (ዸ-series, non-Amharic)
+    "ጅዋ": "ጇ",  # J  + WAA → JWA
+    "ጥዋ": "ጧ",  # TH + WAA → THWA
+    "ጭዋ": "ጯ",  # CH + WAA → CHWA  (ጨ-series)
+    "ጵዋ": "ጷ",  # PH + WAA → PHWA
+    "ጽዋ": "ጿ",  # TS + WAA → TSWA
+    "ፍዋ": "ፏ",  # F  + WAA → FWA
+    "ፕዋ": "ፗ",  # P  + WAA → PWA
+    "ቅዋ": "ቋ",  # Q  + WAA → QWAA
+    "ቕዋ": "ቛ",  # QH + WAA → QHWAA (ቐ-series, non-Amharic)
+    "ኅዋ": "ኋ",  # X  + WAA → XWAA
+    "ክዋ": "ኳ",  # K  + WAA → KWAA
+    "ኽዋ": "ዃ",  # KX + WAA → KXWAA (ኸ-series, non-Amharic)
+    "ግዋ": "ጓ",  # G  + WAA → GWAA
 }
 _LABIALIZATION_FROM = list(_LABIALIZATION_MAP.keys())
 _LABIALIZATION_TO = list(_LABIALIZATION_MAP.values())

@@ -30,9 +30,13 @@ Run (from the project root): python -m processing.utils.score_africomet
 Requires: pip install unbabel-comet (first call downloads the model from
 HuggingFace, ~2.2GB for the 76L encoder).
 """
+import os
+
 import pandas as pd
 import torch
 from comet import download_model, load_from_checkpoint
+from huggingface_hub import constants
+from huggingface_hub.file_download import are_symlinks_supported, repo_folder_name
 
 from processing.utils.paths import PROCESSED
 from processing.utils.score_cache import scored
@@ -42,11 +46,24 @@ from processing.utils.score_cache import scored
 _MODEL_NAME = "masakhane/africomet-qe-stl-1.1"
 _africomet_model = None
 
+# score_cache persists after every scored() call, so checkpointing here (rather than
+# once per whole file) bounds how much a crash/power-loss mid-file can cost: only the
+# in-flight chunk is re-scored on restart, not the file scored so far (nllb.csv alone
+# is hundreds of thousands of rows — the one file large enough for this to matter).
+_CHECKPOINT_ROWS = 20_000
+
 
 def _get_africomet_model():
     """Load AfriCOMET-QE once (first call downloads ~2.2GB from HuggingFace)."""
     global _africomet_model
     if _africomet_model is None:
+        # Single-threaded warm-up: snapshot_download fetches this checkpoint's files
+        # concurrently, and are_symlinks_supported()'s cache-population isn't thread-safe
+        # on Windows (a race can let one thread try a real symlink and crash with
+        # WinError 1314). Must warm the *repo's own* cache subfolder (blobs/ + snapshots/
+        # live there) — that's the directory _create_symlink actually checks, not
+        # HF_HUB_CACHE itself, which is one level up and never hits that dict entry.
+        are_symlinks_supported(os.path.join(constants.HF_HUB_CACHE, repo_folder_name(repo_id=_MODEL_NAME, repo_type="model")))
         print(f"[africomet] loading {_MODEL_NAME} ...")
         model_path = download_model(_MODEL_NAME)
         _africomet_model = load_from_checkpoint(model_path)
@@ -86,7 +103,11 @@ def main() -> None:
             print(f"[africomet] skipping {p.name} (not am/en parallel text)")
             continue
         print(f"[africomet] scoring {p.name}: {len(df)} rows")
-        df = scored(df, "africomet", ["africomet_score"], africomet_quality)
+        chunks = [
+            scored(df.iloc[i:i + _CHECKPOINT_ROWS].copy(), "africomet", ["africomet_score"], africomet_quality)
+            for i in range(0, len(df), _CHECKPOINT_ROWS)
+        ]
+        df = pd.concat(chunks, ignore_index=True) if chunks else df
         df.to_csv(p, index=False)
         annotated += 1
     print(f"\n[africomet] annotated {annotated} source(s) → {PROCESSED}")

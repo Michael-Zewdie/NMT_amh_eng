@@ -21,13 +21,19 @@ embed). A row that already carries laser_score (nllb.csv) doesn't need labse_sco
 too, so score_cache.scored() skips those rows via skip_where rather than this file
 hardcoding nllb.csv by name.
 """
+import os
+
 import numpy as np
 import pandas as pd
 import torch
+from huggingface_hub import constants
+from huggingface_hub.file_download import are_symlinks_supported, repo_folder_name
 from sentence_transformers import SentenceTransformer
 
 from processing.utils.paths import PROCESSED
 from processing.utils.score_cache import scored
+
+_LABSE_REPO = "sentence-transformers/LaBSE"
 
 # LaBSE cosine ranges 0-1; aligned pairs typically score ~0.6-0.9. The cutoff that
 # consumes this score lives in process.py / pool.py — this file does not filter.
@@ -35,12 +41,21 @@ _labse_model = None
 
 
 def _get_labse_model() -> SentenceTransformer:
-    """Load LaBSE once, on MPS if available (first call downloads ~1.8GB)."""
+    """Load LaBSE once, on CUDA/MPS if available (first call downloads ~1.8GB)."""
     global _labse_model
     if _labse_model is None:
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
-        print(f"[labse] loading sentence-transformers/LaBSE on {device}...")
-        _labse_model = SentenceTransformer("sentence-transformers/LaBSE", device=device)
+        # Single-threaded warm-up: HF's concurrent file download has a Windows symlink
+        # race (see score_africomet.py's _get_africomet_model for detail). Must warm the
+        # repo's own cache subfolder, not HF_HUB_CACHE itself — see that file for why.
+        are_symlinks_supported(os.path.join(constants.HF_HUB_CACHE, repo_folder_name(repo_id=_LABSE_REPO, repo_type="model")))
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+        print(f"[labse] loading {_LABSE_REPO} on {device}...")
+        _labse_model = SentenceTransformer(_LABSE_REPO, device=device)
     return _labse_model
 
 

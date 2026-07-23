@@ -21,9 +21,12 @@ Run (from the project root): python -m processing.utils.score_lid
 
 nllb.csv already ships these columns from Meta, so it is skipped.
 """
+import os
+
 import fasttext
 import pandas as pd
-from huggingface_hub import hf_hub_download
+from huggingface_hub import constants, hf_hub_download
+from huggingface_hub.file_download import are_symlinks_supported, repo_folder_name
 
 from processing.utils.paths import PROCESSED
 from processing.utils.score_cache import scored
@@ -41,6 +44,12 @@ def _get_lid_model() -> "fasttext.FastText._FastText":
     """Load lid218e once (first call downloads ~1.2GB from HuggingFace)."""
     global _lid_model
     if _lid_model is None:
+        # Single-threaded warm-up: HF's concurrent file download has a Windows symlink
+        # race (see score_africomet.py's _get_africomet_model for detail). hf_hub_download
+        # only fetches one file here so the race is unlikely to trigger, but this keeps
+        # the same safe pattern as the other two scoring stages. Must warm the repo's own
+        # cache subfolder, not HF_HUB_CACHE itself — see score_africomet.py for why.
+        are_symlinks_supported(os.path.join(constants.HF_HUB_CACHE, repo_folder_name(repo_id=_LID_REPO, repo_type="model")))
         print(f"[lid] loading {_LID_REPO} ...")
         _lid_model = fasttext.load_model(hf_hub_download(_LID_REPO, _LID_FILE))
     return _lid_model

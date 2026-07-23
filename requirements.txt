@@ -1,0 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+pandas
+polars
+pyarrow
+datasets
+matplotlib
+numpy
+tldextract
+torch
+sentence-transformers
+scikit-learn
+fasttext-wheel
+huggingface_hub
+unbabel-comet
+setuptools<81  # comet's pinned pytorch-lightning/torchmetrics still import pkg_resources, removed in setuptools 81+
