@@ -21,3 +21,5 @@ PROCESSED = DATA / "processed"  # per-source cleaned CSVs, NLLB nllb.csv, dist J
 FINAL     = DATA / "final"      # train/validation/test splits
 FIGS      = PROCESSED / "figs"  # generated charts
 SCORES    = DATA / "scores"     # content-keyed model-score caches (see utils.score_cache)
+EMBEDDINGS = DATA / "embeddings" # content-keyed embedding-vector caches (see utils.embed_cache)
+MODELS     = DATA / "models"    # persisted clustering models (see dist.clusters)

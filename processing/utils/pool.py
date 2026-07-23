@@ -12,12 +12,14 @@ and score_lid only annotate, leaving every scored row in data/processed/. So
 retuning a threshold is just a re-pool (seconds) rather than a re-embed (hours),
 and a *lower* cutoff brings rows back instead of being unrecoverable.
 
-The split is **stratified by Amharic sentence-length bucket** (short/medium/long,
-from nmt.lengths — the same buckets explore.length_dist reports), so train,
-validation and test all carry the same length proportions.
+The split is **jointly stratified by Amharic sentence-length bucket**
+(short/medium/long, from nmt.lengths — the same buckets explore.length_dist
+reports) **and by semantic cluster** (processing.dist.clusters, k-means over a
+BGE-large-en-v1.5 embedding of one canonical English reference per unique am),
+so train, validation and test all carry matching length AND topic proportions.
 
 Outputs:
-  data/final/train.csv        80/10/10 split, deduplicated, shuffled, length-stratified
+  data/final/train.csv        80/10/10 split, deduplicated, shuffled, length- and cluster-stratified
   data/final/validation.csv
   data/final/test.csv
 """
@@ -25,6 +27,8 @@ import pandas as pd
 
 from processing.utils.paths import PROCESSED, FINAL
 from processing.dist.lengths import LENGTH_CUTOFFS, BUCKETS, bucketize
+from processing.dist import clusters
+from processing.utils import embed_cache, embed_english
 
 SEED = 42
 
@@ -110,14 +114,20 @@ def pool(frames: list[pd.DataFrame], seed: int = SEED) -> pd.DataFrame:
     return deduped.sample(frac=1, random_state=seed).reset_index(drop=True)
 
 
-def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[str, pd.DataFrame]:
-    """Length-stratified train/val/test split (default 80/10/10) → data/final/.
+def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED,
+          n_clusters: int = clusters.N_CLUSTERS) -> dict[str, pd.DataFrame]:
+    """Length- and semantic-cluster-stratified train/val/test split (default
+    80/10/10) → data/final/.
 
-    Each pair is bucketed by Amharic char length (nmt.lengths); the ratios are
-    applied *within* every bucket and the pieces recombined, so every split holds
-    the same short/medium/long proportions. The pool is already deduped+shuffled,
-    so a positional slice inside a bucket is a random draw; each split is then
-    reshuffled so buckets interleave rather than sit in blocks.
+    Each pair is bucketed by Amharic char length (nmt.lengths) AND by a semantic
+    cluster derived from a BGE-large-en-v1.5 embedding of one canonical English
+    reference per unique am (processing.dist.clusters) — the joint of the two
+    is the stratum. Ratios are applied *within* every stratum and the pieces
+    recombined, so every split holds matching short/medium/long proportions
+    *and* matching topic-cluster proportions. The pool is already
+    deduped+shuffled, so a positional slice inside a stratum is a random draw;
+    each split is then reshuffled so strata interleave rather than sit in
+    blocks.
 
     The split is grouped by am, not sliced row-by-row: since pool() now keeps
     multiple English references for the same Amharic sentence (e.g. quran.csv's
@@ -130,11 +140,24 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
     df = df.copy()
     df["_bucket"] = bucketize(df["am"].str.len().to_numpy())
 
+    # One canonical English reference per unique am (first after the seeded
+    # shuffle pool() already applied) — clustering doesn't need every
+    # translator variant, just enough signal to place each Amharic sentence in
+    # a topic. The resulting cluster id is then propagated to every row sharing
+    # that am, so am stays the single grouping/leakage-prevention key below.
+    canonical_en = df.drop_duplicates(subset="am", keep="first").set_index("am")["en"]
+    embeddings = embed_cache.embedded(canonical_en, "bge_en", embed_english.encode_texts)
+    model = clusters.load_or_fit(embeddings, k=n_clusters, seed=seed)
+    am_to_cluster = pd.Series(clusters.bucketize(embeddings, model), index=canonical_en.index)
+    df["_cluster"] = df["am"].map(am_to_cluster)
+    df["_stratum"] = df["_bucket"].astype(str) + "|" + df["_cluster"].astype(str)
+
     parts: dict[str, list[pd.DataFrame]] = {"train": [], "validation": [], "test": []}
-    for b in BUCKETS:
-        grp = df[df["_bucket"] == b] #keep all of the sentences of type bt
-        # Every row sharing an am has identical length, so it's already confined to
-        # this bucket — group assignment can't leak a sentence across buckets.
+    for s in sorted(df["_stratum"].unique()):
+        grp = df[df["_stratum"] == s] #keep all of the sentences of this stratum
+        # Every row sharing an am has identical length and cluster, so it's
+        # already confined to this stratum — group assignment can't leak a
+        # sentence across strata.
         uniq_am = grp["am"].drop_duplicates().sample(frac=1, random_state=seed).reset_index(drop=True)
         n_train = int(len(uniq_am) * ratios[0])
         n_val   = int(len(uniq_am) * ratios[1])
@@ -146,40 +169,61 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
 
     splits = {}
 
-    #Shuffle and get rid of _bucket col
+    #Shuffle; keep the stratum cols for _report, drop them before writing out
     for name, chunks in parts.items():
         s = pd.concat(chunks).sample(frac=1, random_state=seed).reset_index(drop=True)
-        splits[name] = s.drop(columns="_bucket")
+        splits[name] = s
 
-    # _report(df, splits)
+    _report(df, splits)
     #Send data to FINAL folder
     for name, part in splits.items():
         path = FINAL / f"{name}.csv"
-        part.to_csv(path, index=False)
+        part.drop(columns=["_bucket", "_cluster", "_stratum"]).to_csv(path, index=False)
         print(f"final/{name}: {len(part)} pairs → {path}")
-    return splits
+    return {name: part.drop(columns=["_bucket", "_cluster", "_stratum"]) for name, part in splits.items()}
 
 
-# def _report(df: pd.DataFrame, splits: dict[str, pd.DataFrame]) -> None:
-#     """Print each split's length-bucket proportions to confirm they match."""
-#     lo, hi = LENGTH_CUTOFFS
-#     print(f"[pool] length buckets (Amharic chars: short <{lo} | medium | long ≥{hi}) — "
-#           f"proportions should match across splits:")
-#     header = "         " + "".join(f"{b:>10}" for b in BUCKETS) + f"{'n':>10}"
-#     print(header)
-#     for name, part in {"pool": df, **splits}.items():
-#         lengths = part["am"].str.len().to_numpy()
-#         labels = bucketize(lengths)
-#         n = len(part)
-#         cells = "".join(f"{(labels == b).mean() * 100:9.1f}%" for b in BUCKETS)
-#         print(f"  {name:>7}{cells}{n:>10,}")
+def _report(df: pd.DataFrame, splits: dict[str, pd.DataFrame]) -> None:
+    """Print each split's length-bucket and semantic-cluster proportions, plus
+    per-stratum unique-am/row counts, so thin strata (risking zero validation/test
+    representation for a niche cluster×length cell) are visible rather than
+    discovered later as an unexplained gap."""
+    lo, hi = LENGTH_CUTOFFS
+    print(f"[pool] length buckets (Amharic chars: short <{lo} | medium | long ≥{hi}) — "
+          f"proportions should match across splits:")
+    header = "         " + "".join(f"{b:>10}" for b in BUCKETS) + f"{'n':>10}"
+    print(header)
+    for name, part in {"pool": df, **splits}.items():
+        lengths = part["am"].str.len().to_numpy()
+        labels = bucketize(lengths)
+        n = len(part)
+        cells = "".join(f"{(labels == b).mean() * 100:9.1f}%" for b in BUCKETS)
+        print(f"  {name:>7}{cells}{n:>10,}")
+
+    n_clusters = df["_cluster"].nunique()
+    cluster_names = sorted(df["_cluster"].unique())
+    print(f"\n[pool] semantic clusters (k={n_clusters}) — proportions should match across splits:")
+    header = "         " + "".join(f"{c:>10}" for c in cluster_names) + f"{'n':>10}"
+    print(header)
+    for name, part in {"pool": df, **splits}.items():
+        labels = part["_cluster"]
+        n = len(part)
+        cells = "".join(f"{(labels == c).mean() * 100:9.1f}%" for c in cluster_names)
+        print(f"  {name:>7}{cells}{n:>10,}")
+
+    print("\n[pool] per-stratum (length|cluster) unique-am / row counts:")
+    stratum_stats = df.groupby("_stratum").agg(unique_am=("am", "nunique"), rows=("am", "size"))
+    for stratum, row in stratum_stats.sort_values("unique_am").iterrows():
+        flag = "  <-- thin" if row["unique_am"] < 10 else ""
+        print(f"  {stratum:>20}: {int(row['unique_am']):>6} unique am, {int(row['rows']):>7} rows{flag}")
 
 
 def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          cosine_cutoff: float = COSINE_CUTOFF,
          africomet_cutoff: float = AFRICOMET_CUTOFF,
          source_lid_cutoff: float = SOURCE_LID_CUTOFF,
-         target_lid_cutoff: float = TARGET_LID_CUTOFF) -> None:
+         target_lid_cutoff: float = TARGET_LID_CUTOFF,
+         n_clusters: int = clusters.N_CLUSTERS) -> None:
     """Filter every parallel-text CSV in data/processed/ by the quality cutoffs, pool
     them, and split into data/final/."""
     # sorted() gives a deterministic order so the cross-source dedup keep="first"
@@ -204,7 +248,7 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
     if not frames:
         raise ValueError(f"No am/en source CSVs found in {PROCESSED}.")
 
-    split(pool(frames, seed=seed), ratios=split_ratios, seed=seed)
+    split(pool(frames, seed=seed), ratios=split_ratios, seed=seed, n_clusters=n_clusters)
 
 
 if __name__ == "__main__":
