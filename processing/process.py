@@ -42,10 +42,10 @@ SPLIT           = (0.8, 0.1, 0.1)   # train / validation / test ratios
 CSV_SOURCES = sorted(CSV_RAW.glob("*.csv"))
 
 # ── STAGE TOGGLES ──────────────────────────────────────────────────────────────
-RUN_CLEAN         = True            # clean csv_raw/*.csv → data/processed/
-RUN_LABSE         = False            # annotate labse_score (cached; slow only on unseen text)
-RUN_AFRICOMET     = False            # annotate africomet_score (cached; slow only on unseen text)
-RUN_LID           = False            # annotate source_lid/target_lid (cached; slow only on unseen text)
+RUN_CLEAN         = False            # clean csv_raw/*.csv → data/processed/
+RUN_LABSE         = True            # annotate labse_score (cached; slow only on unseen text)
+RUN_AFRICOMET     = True            # annotate africomet_score (cached; slow only on unseen text)
+RUN_LID           = True            # annotate source_lid/target_lid (cached; slow only on unseen text)
 RUN_POOL          = True            # apply the cutoffs, pool every source + split → data/final/ (+ always regenerates the length-dist chart)
 # ────────────────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,8 @@
 # Data — 5.6 GB of raw/generated material; regenerable via the collect/ + process/ scripts.
-data/
+/data/
+
+# Training artifacts — checkpoints + TensorBoard logs, regenerable via model/train.py
+runs/
 
 # Python caches
 __pycache__/
@@ -7,3 +10,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Python virtual environment
+venv/

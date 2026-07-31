@@ -21,3 +21,10 @@ PROCESSED = DATA / "processed"  # per-source cleaned CSVs, NLLB nllb.csv, dist J
 FINAL     = DATA / "final"      # train/validation/test splits
 FIGS      = PROCESSED / "figs"  # generated charts
 SCORES    = DATA / "scores"     # content-keyed model-score caches (see utils.score_cache)
+
+TOKENIZER    = DATA / "tokenizer"   # trained tokenizer artifacts
+TOKENIZER_EN = TOKENIZER / "en"     # English BPE tokenizer output
+TOKENIZER_AM = TOKENIZER / "am"     # Amharic Unigram tokenizer output
+
+PREPARED = DATA / "prepared"        # tokenized id caches per split, keyed by lang pair (model/data/prepare.py)
+RUNS     = ROOT / "runs"            # training runs: <run_name>/{checkpoints,tensorboard}/ (gitignored)

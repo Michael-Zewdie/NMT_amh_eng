@@ -38,7 +38,7 @@ def _get_labse_model() -> SentenceTransformer:
     """Load LaBSE once, on MPS if available (first call downloads ~1.8GB)."""
     global _labse_model
     if _labse_model is None:
-        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         print(f"[labse] loading sentence-transformers/LaBSE on {device}...")
         _labse_model = SentenceTransformer("sentence-transformers/LaBSE", device=device)
     return _labse_model
