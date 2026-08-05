@@ -21,7 +21,7 @@ import hashlib
 
 import pandas as pd
 
-from processing.utils.paths import SCORES
+from processing.utils.paths import PROCESSED, SCORES
 
 
 def row_keys(df: pd.DataFrame, key_cols: tuple[str, ...] = ("am", "en")) -> pd.Series:
@@ -105,3 +105,31 @@ def scored(df: pd.DataFrame, name: str, score_cols: list[str], compute,
     for col in score_cols:
         out[col] = cache[col].reindex(keys).to_numpy()
     return out
+
+
+def annotate_processed(tag: str, score_cols: list[str], compute,
+                       skip_where: str | None = None,
+                       skip_files: tuple[str, ...] = ()) -> None:
+    """Add `score_cols` to every am/en CSV in data/processed/, writing back in place.
+
+    The shared body of score_labse / score_africomet / score_lid's main(), which
+    were three verbatim copies of this loop. Each now supplies only what actually
+    differs: its log tag, the columns it produces, the compute function, and
+    whichever rows or files it skips.
+
+    `skip_files` names CSVs that already ship these columns from upstream
+    (nllb.csv carries Meta's own source_lid/target_lid). `skip_where` is passed
+    through to scored() — see its docstring for the equivalent-score logic.
+    """
+    annotated = 0
+    for path in sorted(PROCESSED.glob("*.csv")):
+        if path.name in skip_files:
+            continue
+        df = pd.read_csv(path, dtype=str)
+        if not {"am", "en"}.issubset(df.columns):
+            print(f"[{tag}] skipping {path.name} (not am/en parallel text)")
+            continue
+        print(f"[{tag}] scoring {path.name}: {len(df)} rows")
+        scored(df, tag, score_cols, compute, skip_where=skip_where).to_csv(path, index=False)
+        annotated += 1
+    print(f"\n[{tag}] annotated {annotated} source(s) → {PROCESSED}")

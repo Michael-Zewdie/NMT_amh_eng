@@ -34,8 +34,7 @@ import pandas as pd
 import torch
 from comet import download_model, load_from_checkpoint
 
-from processing.utils.paths import PROCESSED
-from processing.utils.score_cache import scored
+from processing.utils.score_cache import annotate_processed
 
 # Tensor Cores (Ampere+/Ada) speed up matmul substantially at a negligible precision
 # cost that doesn't matter for QE scoring — ~2.4x throughput measured on RTX 4000 Ada.
@@ -83,17 +82,7 @@ def africomet_quality(df: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     """Add africomet_score to every am/en CSV in data/processed/, writing back in
     place. Every source is scored, including nllb.csv — see module docstring."""
-    annotated = 0
-    for p in sorted(PROCESSED.glob("*.csv")):
-        df = pd.read_csv(p, dtype=str)
-        if not {"am", "en"}.issubset(df.columns):
-            print(f"[africomet] skipping {p.name} (not am/en parallel text)")
-            continue
-        print(f"[africomet] scoring {p.name}: {len(df)} rows")
-        df = scored(df, "africomet", ["africomet_score"], africomet_quality)
-        df.to_csv(p, index=False)
-        annotated += 1
-    print(f"\n[africomet] annotated {annotated} source(s) → {PROCESSED}")
+    annotate_processed("africomet", ["africomet_score"], africomet_quality)
 
 
 if __name__ == "__main__":

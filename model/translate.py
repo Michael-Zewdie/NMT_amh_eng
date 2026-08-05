@@ -1,47 +1,53 @@
 """
 model.translate — interactive REPL: read source-language text from stdin,
-print the translation, using a trained checkpoint. Reuses model.evaluate's
-greedy_decode rather than a second decoding implementation.
+print the translation, using a trained checkpoint. Reuses model.search's
+decode dispatcher rather than a second decoding implementation, so the REPL
+uses whatever strategy the config's inference.beam_size asks for.
 
 Run (from the project root): python -m model.translate [config_path] [checkpoint_path]
-Defaults: model/configs/base.yaml, <run_dir>/checkpoints/last.pt.
+Defaults: model/configs/base_v6.yaml, <run_dir>/checkpoints/last.pt.
 """
 import sys
 
+import polars as pl
 import torch
 
-from model.checkpoint import load_checkpoint
-from model.data.tokenizer import BOS_ID, EOS_ID, PAD_ID, load_tokenizer
-from model.evaluate import greedy_decode
-from model.transformer import Seq2SeqTransformer
-from model.utils.common import get_device
-from model.utils.config import Config, load_config
-from processing.utils.paths import RUNS
+from model.common import BOS_ID, EOS_ID, load_for_inference
+from model.config import Config
+from model.search import decode
+from processing.clean.normalize import normalize
 
-DEFAULT_CONFIG = "model/configs/base.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"
+
+
+def normalize_source(text: str) -> str:
+    """Apply the same Amharic normalization the training corpus went through.
+
+    Non-optional: the model only ever saw normalized text, so skipping this
+    measures a preprocessing mismatch rather than translation quality. Doing so
+    costs ~1.8 BLEU on FLORES devtest (17.35 -> 15.57 for am-en-base-v6), which
+    is larger than the entire gain from beam search. model.evaluate_benchmark
+    does this inside load_benchmark(); the REPL has to do it explicitly, since
+    its input arrives as a bare line of stdin.
+    """
+    df = normalize(pl.DataFrame({"am": [text], "en": [""]}), "am", "en", name=None)
+    return df["am"][0]
 
 
 def translate(model, text: str, src_tokenizer, tgt_tokenizer, cfg: Config, device: torch.device) -> str:
-    ids = [BOS_ID, *src_tokenizer.encode(text).ids, EOS_ID]
+    ids = [BOS_ID, *src_tokenizer.encode(normalize_source(text)).ids, EOS_ID]
     src = torch.tensor([ids], device=device)
     src_pad_mask = torch.zeros_like(src, dtype=torch.bool)
-    generated = greedy_decode(model, src, src_pad_mask, cfg.inference.max_len)
+    generated = decode(model, src, src_pad_mask, cfg)
     return tgt_tokenizer.decode(generated[0].tolist(), skip_special_tokens=True)
 
 
 def main() -> None:
     config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG
-    cfg = load_config(config_path)
-    checkpoint_path = sys.argv[2] if len(sys.argv) > 2 else str(RUNS / cfg.run_name / "checkpoints" / "last.pt")
+    checkpoint_path = sys.argv[2] if len(sys.argv) > 2 else None
+    cfg, model, src_tokenizer, tgt_tokenizer, device = load_for_inference(config_path, checkpoint_path)
 
-    device = get_device()
-    src_tokenizer = load_tokenizer(cfg.data.src_lang)
-    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
-    model = Seq2SeqTransformer.from_config(cfg, src_tokenizer.get_vocab_size(), tgt_tokenizer.get_vocab_size(), PAD_ID, device)
-    load_checkpoint(checkpoint_path, model, map_location=device)
-    model.eval()
-
-    print(f"[translate] loaded {checkpoint_path} — type {cfg.data.src_lang} text, Ctrl+D to exit", file=sys.stderr)
+    print(f"[translate] loaded {cfg.run_name} — type {cfg.data.src_lang} text, Ctrl+D to exit", file=sys.stderr)
     for line in sys.stdin:
         line = line.strip()
         if not line:

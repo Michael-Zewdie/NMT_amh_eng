@@ -6,17 +6,16 @@ Mask convention used throughout this project: boolean mask where True means
 "block this position" (matches torch's additive-mask-friendly convention and
 is documented once here rather than re-derived per file).
 """
-from __future__ import annotations
-
 import pickle
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
-from model.data.tokenizer import PAD_ID
-from model.utils.config import Config
+from model.common import PAD_ID
+from model.config import Config
 from processing.utils.paths import PREPARED
 
 
@@ -40,7 +39,15 @@ class Batch:
 
 class TranslationDataset(Dataset):
     def __init__(self, split: str, cfg: Config):
-        pair_dir = PREPARED / f"{cfg.data.src_lang}-{cfg.data.tgt_lang}"
+        # data.prepared_dir lets an experiment arm point at its own tokenized cache
+        # (data/prepared_narrow/, …) instead of the production data/prepared/.
+        # Before this existed, arms were run by MOVING directories into place, and
+        # the overnight domain-breadth script restored the production directory
+        # before its eval step — so its "[arm] in-distribution (own validation)"
+        # lines were in fact scored against the 51,236-example production split.
+        # An explicit config key removes the whole class of mistake.
+        root = Path(cfg.data.get("prepared_dir") or PREPARED)
+        pair_dir = root / f"{cfg.data.src_lang}-{cfg.data.tgt_lang}"
         with open(pair_dir / f"{split}.pkl", "rb") as f:
             raw = pickle.load(f)
 
@@ -50,8 +57,6 @@ class TranslationDataset(Dataset):
             if len(s) <= cfg.data.max_src_len and len(t) <= cfg.data.max_tgt_len:
                 self.src.append(s)
                 self.tgt.append(t)
-
-        self.lengths = [len(s) for s in self.src]
 
     def __len__(self) -> int:
         return len(self.src)

@@ -1,0 +1,60 @@
+# am-en-nllb-93k — CONTROLLED ARM B of the diversity-vs-volume experiment.
+#
+# am-en-gezmu-only changed two things at once against am-en-base-v6: it narrowed
+# the domain (1 source vs 6) AND cut volume 4.4x. FLORES collapsed 17.35 -> 3.14,
+# but that run cannot attribute the collapse. Holding volume fixed separates them:
+#
+#   arm A  am-en-gezmu-only  93,649 train  narrow, curated   in-dist 20.99, FLORES 3.14
+#   arm B  am-en-nllb-93k    93,638 train  diverse, mined    <- this file
+#   arm C  am-en-mixed-93k   93,619 train  diverse, mixed
+#
+#   B/C vs A            -> effect of DIVERSITY at fixed volume
+#   C vs am-en-base-v6  -> effect of VOLUME at fixed composition (93,619 vs 408,826)
+#
+# Data: experiments/fixed_size_corpus.py, NLLB only, subsampled after pool()'s
+# dedup+seed-shuffle so the slice is a uniform draw. Mined-tier cutoffs
+# (labse>0.7, africomet>0.80, LID>0.90), identical to v6.
+#
+# Everything else is byte-identical to gezmu_only.yaml: same architecture, LR,
+# warmup (so peak LR matches), dropout, eval_subset_size, max_steps, and the SAME
+# tokenizers (deliberately not retrained). Composition is the only variable.
+#
+# Reads data/prepared_nllb/ — must be swapped into place as data/prepared/am-en.
+run_name: am-en-nllb-93k
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # same as v6 -> identical peak LR 6.99e-4
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 57000          # ~29.35 epochs, matching v6's epoch count
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 1000
+  eval_every_steps: 1000
+  eval_subset_size: 3000    # same as v6, so the subset scores are comparable
+  log_every_steps: 200
+  resume_from: null
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

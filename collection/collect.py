@@ -5,6 +5,7 @@ collect.py — Gather every source into data/raw/csv_raw/ as CSVs.
   - Gezmu + Quran/Tanzil from local parallel files in data/raw/local/
   - NLLB: download the mined parquet if missing, then laser-filter it down to a
     tractable am/en CSV (csv_raw/nllb.csv)
+  - CCAligned: download the OPUS moses-format am-en release (~346k pairs, web-mined)
 
 Everything downstream (process.py) just cleans the CSVs this produces, so the
 NLLB parquet is handled here, not there. Run (from the project root):
@@ -18,28 +19,30 @@ fixed local files, and AfriDoc is pinned to a HuggingFace release, so their CSVs
 can't change between runs — a default run skips them once they exist. That also
 keeps `load_dataset` from round-tripping to HuggingFace, which it does on every
 call even with a warm cache (~5s, and the one thing here that stalls on a bad
-connection).
+connection). CCAligned is a fixed OPUS release too, same story.
 
 NLLB is different: its CSV depends on the cutoffs in this file, so tuning one means
 rebuilding it. Name it explicitly (`python -m collection.collect nllb`) — an explicitly
 named source always rebuilds, skip-if-exists only applies to a default run.
 
-Outputs: data/raw/csv_raw/{afridoc_health,afridoc_tech,gezmu,quran,nllb}.csv
+Outputs: data/raw/csv_raw/{afridoc_health,afridoc_tech,gezmu,quran,nllb,ccaligned}.csv
 """
 import argparse
 import csv as csvlib
 import sys
+import zipfile
 
 import pandas as pd
 import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
+import requests
 from datasets import load_dataset
 
-from processing.utils.paths import CSV_RAW, LOCAL, NLLB_FULL
+from processing.utils.paths import CCALIGNED_FULL, CSV_RAW, LOCAL, NLLB_FULL
 
 # NLLB laser_score threshold: 1.1 keeps the top ~1.5% (~425k of 16.1M pairs).
-LASER_CUTOFF = 1.05
+LASER_CUTOFF = 1.06
 # fastText LID (lid218e) confidence floors, mirrored on the non-NLLB side by
 # processing.utils.score_lid. source = Amharic (amh_Ethi), target = English
 # (eng_Latn). NLLB pre-filtered target_lid >= 0.95; source_lid has a noisy tail
@@ -55,6 +58,11 @@ NLLB_COLUMNS = [
     "amh", "eng", "laser_score", "source_lid", "target_lid",
     "source_source", "source_url", "target_source", "target_url",
 ]
+
+# OPUS CCAligned am-en release (Moses format): web-mined via per-document LASER
+# alignment (El-Kishky et al. 2020), no per-pair score shipped — unlike nllb, so
+# it gets no laser_score exemption from the labse_score cutoff downstream.
+CCALIGNED_URL = "https://object.pouta.csc.fi/OPUS-CCAligned/v1/moses/am-en.txt.zip"
 
 
 def collect_afridoc() -> None:
@@ -158,13 +166,39 @@ def collect_nllb() -> None:
     )
 
 
+def collect_ccaligned() -> None:
+    """OPUS CCAligned am-en (web-mined, Moses format) → csv_raw/ccaligned.csv."""
+    zip_path = CCALIGNED_FULL / "am-en.txt.zip"
+    am_path = CCALIGNED_FULL / "CCAligned.am-en.am"
+    en_path = CCALIGNED_FULL / "CCAligned.am-en.en"
+
+    if not (am_path.exists() and en_path.exists()):
+        CCALIGNED_FULL.mkdir(parents=True, exist_ok=True)
+        resp = requests.get(CCALIGNED_URL, timeout=120)
+        resp.raise_for_status()
+        zip_path.write_bytes(resp.content)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extract("CCAligned.am-en.am", CCALIGNED_FULL)
+            zf.extract("CCAligned.am-en.en", CCALIGNED_FULL)
+        zip_path.unlink()
+
+    df = pd.DataFrame({
+        "am": am_path.read_text(encoding="utf-8").splitlines(),
+        "en": en_path.read_text(encoding="utf-8").splitlines(),
+    })
+    out = CSV_RAW / "ccaligned.csv"
+    df.to_csv(out, index=False)
+    print(f"ccaligned: {len(df)} raw pairs → {out}")
+
+
 # Each source, with the CSV(s) it produces — the outputs a default run checks for
 # before deciding it has nothing to do.
 SOURCES: dict[str, tuple] = {
-    "afridoc": (collect_afridoc, ("afridoc_health.csv", "afridoc_tech.csv")),
-    "gezmu":   (collect_gezmu,   ("gezmu.csv",)),
-    "quran":   (collect_quran,   ("quran.csv",)),
-    "nllb":    (collect_nllb,    ("nllb.csv",)),
+    "afridoc":   (collect_afridoc,   ("afridoc_health.csv", "afridoc_tech.csv")),
+    "gezmu":     (collect_gezmu,     ("gezmu.csv",)),
+    "quran":     (collect_quran,     ("quran.csv",)),
+    "nllb":      (collect_nllb,      ("nllb.csv",)),
+    "ccaligned": (collect_ccaligned, ("ccaligned.csv",)),
 }
 
 

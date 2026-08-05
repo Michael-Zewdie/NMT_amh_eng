@@ -2,8 +2,9 @@
 model.train — training loop entrypoint.
 
 Run (from the project root): python -m model.train [config_path]
-config_path defaults to model/configs/base.yaml (no argparse, matching the
+config_path defaults to model/configs/base_v6.yaml (no argparse, matching the
 repo's existing plain-sys.argv precedent, e.g. collection/collect.py).
+Superseded configs live in model/configs/archive/.
 """
 import sys
 import time
@@ -13,17 +14,15 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from model.checkpoint import load_checkpoint, save_checkpoint
+from model.common import PAD_ID, get_device, load_checkpoint, load_tokenizer, save_checkpoint, set_seed
+from model.config import Config, load_config
 from model.data.dataset import TranslationDataset, collate_fn, make_dataloader
-from model.data.tokenizer import PAD_ID, load_tokenizer
 from model.evaluate import evaluate_loader
 from model.optim import build_optimizer, build_scheduler
 from model.transformer import Seq2SeqTransformer
-from model.utils.common import get_device, set_seed
-from model.utils.config import Config, load_config
 from processing.utils.paths import RUNS
 
-DEFAULT_CONFIG = "model/configs/base.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"
 
 
 def make_eval_subset_loader(cfg: Config) -> DataLoader:
@@ -51,7 +50,9 @@ def run_eval(model, eval_loader, tgt_tokenizer, criterion, cfg, device, amp_dtyp
         n_batches += 1
     val_loss = total_loss / n_batches
 
-    bleu = evaluate_loader(model, eval_loader, tgt_tokenizer, cfg, device)
+    # beam_size=1 regardless of cfg.inference.beam_size — periodic eval stays
+    # greedy so a beam-4 config doesn't quadruple its cost. See evaluate_loader.
+    bleu = evaluate_loader(model, eval_loader, tgt_tokenizer, cfg, device, beam_size=1)
     model.train()
     return val_loss, bleu
 
@@ -67,8 +68,13 @@ def main() -> None:
     tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
     train_loader = make_dataloader("train", cfg)
     eval_loader = make_eval_subset_loader(cfg)
-    steps_per_epoch = len(train_loader)
-    print(f"[train] {steps_per_epoch} steps/epoch ({len(train_loader.dataset)} pairs, batch_size={cfg.data.batch_size})")
+    # len(train_loader) counts micro-batches; an "epoch" is in OPTIMIZER steps, of
+    # which each consumes accum_steps micro-batches — without the divisor the epoch
+    # figure logged below is understated by exactly accum_steps.
+    steps_per_epoch = max(1, len(train_loader) // cfg.training.accum_steps)
+    print(f"[train] {steps_per_epoch} steps/epoch ({len(train_loader.dataset)} pairs, "
+          f"batch_size={cfg.data.batch_size} x accum_steps={cfg.training.accum_steps} "
+          f"= {cfg.data.batch_size * cfg.training.accum_steps} sentences/step)")
 
     model = Seq2SeqTransformer.from_config(cfg, src_tokenizer.get_vocab_size(), tgt_tokenizer.get_vocab_size(), PAD_ID, device)
     optimizer = build_optimizer(model, cfg)
@@ -87,6 +93,7 @@ def main() -> None:
 
     model.train()
     running_loss, running_count, running_tokens = 0.0, 0, 0
+    best_bleu = -1.0
     start_time = time.time()
     data_iter = iter(train_loader)
 
@@ -135,6 +142,10 @@ def main() -> None:
             print(f"[train] step {step}  val_loss {val_loss:.4f}  val_bleu {bleu:.2f}")
             writer.add_scalar("val/loss", val_loss, step)
             writer.add_scalar("val/bleu", bleu, step)
+            if bleu > best_bleu:
+                best_bleu = bleu
+                save_checkpoint(ckpt_dir / "best.pt", model, optimizer, scheduler, step)
+                print(f"[train] new best val_bleu {bleu:.2f} at step {step} -> {ckpt_dir / 'best.pt'}")
 
         if step % cfg.training.save_every_steps == 0:
             save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)

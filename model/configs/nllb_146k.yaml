@@ -1,0 +1,66 @@
+# am-en-nllb-146k — BROAD arm of the large-scale domain-breadth replication.
+#
+# Data: data/prepared_nllb146/ (experiments/religious_vs_nllb.py).
+#   117,624 train pairs = NLLB mined bitext, the 147,048 highest-AfriCOMET rows
+#   passing LID>0.90 (score range 0.8428-1.0195). ~1,300 effective web domains.
+#   34 train pairs apart from the religious arm.
+#
+# SELECTION ASYMMETRY, stated up front: this arm gets NLLB's BEST rows by AfriCOMET
+# while the religious arm keeps everything above a 0.15 garbage floor. That is not
+# the shared-threshold design experiments/domain_breadth.py used, and it is not
+# neutral: it hands the broad arm its cleanest data. If the narrow arm still wins
+# in-distribution, that direction of the result is strengthened; the reverse
+# direction is correspondingly weakened. See the module docstring in
+# experiments/religious_vs_nllb.py.
+#
+# Paired with model/configs/religious.yaml — identical in every field except
+# run_name and prepared_dir. See that file for the hyperparameter rationale
+# (dropout 0.2 for a ~118k corpus, 61,000 steps = ~25 epochs) and for the note
+# that these two arms are rigorously comparable to each other but only
+# benchmark-comparable to the v6/narrow/broad chain.
+#
+# PREDICTION, recorded before running:
+#   in-distribution BLEU LOW relative to the religious arm — its validation split
+#     spans ~1,300 domains, so the exam is genuinely harder.
+#   FLORES/MAFAND HIGHER than the religious arm, and well above am-en-broad's
+#     3.02, since this has 2.8x the data and NLLB's cleanest rows.
+run_name: am-en-nllb-146k
+
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.2
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  prepared_dir: data/prepared_nllb146
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # peak LR 6.99e-4, coupled in model/optim.py
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 61000          # ~25 epochs over 117,624 pairs — same as religious
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 2000
+  eval_every_steps: 2000
+  eval_subset_size: 3000
+  log_every_steps: 200
+  resume_from: null
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

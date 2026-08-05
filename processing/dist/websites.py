@@ -1,12 +1,12 @@
 """
-nmt.websites — map NLLB mined pairs to the registered domain they were crawled from.
+processing.dist.websites — map NLLB mined pairs to the registered domain they were crawled from.
 
 Each pair carries the page it came from (source_url, falling back to target_url).
 ``domains()`` pulls the host out of that URL and collapses it to its registered
 domain (am.econologie.com -> econologie.com) via tldextract, so a site's language/www
 subdomains don't split into separate entries.
 
-Shared by collection/search_domain.py and processing/remove_domain.py.
+Shared by processing/dist/domain_dist.py and processing/random/remove_domain.py.
 """
 import polars as pl
 import tldextract

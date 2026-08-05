@@ -1,0 +1,127 @@
+# am-en-base-v6 — replication of Gezmu, Nürnberger & Bati, "Extended Parallel
+# Corpus for Amharic-English Machine Translation" (arXiv:2104.03543v3, LREC 2022),
+# with the optimizer defect fixed and one data-hygiene change.
+#
+# History: base_v5.yaml was the first attempt at this replication. It never
+# produced a result — a power cut killed it partway through (dead checkpoints left
+# at runs/am-en-base-v5/). base_v5.yaml is kept unmodified as the record of what
+# that run was meant to be; this file is what actually gets trained.
+#
+# ─── Paper §4.2, verbatim ──────────────────────────────────────────────────────
+#   "The hyperparameters include the Adam optimizer with varied learning rate over
+#    the course of training, dropout rate of 0.1, label smoothing of value 0.1,
+#    batch size of 1024, six Transformer blocks with eight heads, filter size of
+#    2048, and hidden size of 512. We used tensor2tensor library to implement the
+#    system."
+#   "We trained, thus, each NMT model for 250000 steps following Vaswani et al. (2017)."
+#   "For decoding, we used a single model obtained by averaging the last twelve
+#    checkpoints. Following Wu et al. (2016), we used a beam size of four and a
+#    length penalty of 0.6."
+#
+# Their result: am→en 33.0 BLEU (NMT-8K, Table 3) — on THEIR own 2,500-pair
+# in-domain test split with 140,000 training pairs. Comparable to our in-distribution
+# validation BLEU, NOT to FLORES/MAFAND.
+#
+# ─── Changed from v5 ──────────────────────────────────────────────────────────
+#   1. model/optim.py now passes weight_decay=0.0 explicitly. torch's AdamW defaults
+#      to 0.01, so every run up to and including v5 was silently training with
+#      decoupled weight decay that Vaswani/tensor2tensor — and therefore Gezmu et al.
+#      — never applied. At 0.0, AdamW is identical to plain Adam. This makes v6 a
+#      MORE faithful replication than v5 would have been. It also means pre-v6
+#      configs no longer reproduce their recorded numbers.
+#   2. CURATED_AFRICOMET_CUTOFF 0.0 → 0.15 in processing/process.py. A garbage
+#      filter, not a quality gate: the curated tail below ~0.10 is genuine
+#      off-by-one sentence misalignment, while everything from ~0.30 up is correct
+#      translation AfriCOMET merely scores low on archaic register. Dropped 53 rows,
+#      all quran. Train is now 408,835 pairs (was 409,443).
+#
+# ─── Matched exactly ──────────────────────────────────────────────────────────
+#   d_model 512 · n_heads 8 · 6+6 blocks · d_ff 2048 · dropout 0.1 ·
+#   label_smoothing 0.1 · 250,000 steps · Adam(0.9, 0.98, eps=1e-9, wd=0) ·
+#   inverse-sqrt "varied learning rate" · tied embedding/softmax (t2t's
+#   shared_embedding_and_softmax_weights default) · beam 4 + length penalty 0.6 ·
+#   8k subword vocabulary (their best am→en point was NMT-8K)
+#
+# ─── Inferred, because the paper does not state it ────────────────────────────
+#   warmup_steps 4000 — the paper says only "varied learning rate ... following
+#   Vaswani et al. (2017)", and 4000 is Vaswani's value. NOT a free knob here:
+#   model/optim.py couples peak LR to warmup as d_model^-0.5 * warmup^-0.5, so
+#   4000 also pins peak LR at 6.99e-4.
+#
+# ─── Known deviations — read before writing up any comparison ─────────────────
+#   1. batch_size: the paper says "1024", but tensor2tensor's batch_size counts
+#      SUBWORD TOKENS, not sentences. Mean target sequence is ~21.1 tokens, so 48
+#      sentences ≈ 1,014 target tokens. accum_steps 1, so the optimizer step IS the
+#      batch. At 48/step, 250k steps ≈ 29 epochs over our pool.
+#   2. No checkpoint averaging. The paper decoded an average of the last twelve
+#      checkpoints; we decode a single best.pt. Still open.
+#   3. Periodic in-training eval is greedy (model/train.py forces beam_size=1)
+#      because beam costs ~4x and would dominate a 250k-step run. best.pt is
+#      therefore selected on greedy scores while final scoring uses beam 4.
+#   4. Different corpus: their 140k vs our pooled ~409k.
+#   5. Different subword algorithm: their shared tensor2tensor word-piece vs our
+#      separate English ByteLevel BPE / Amharic Unigram, both 8k. Tokenizers were
+#      NOT retrained for v6 — the 620-row pool change is 0.15%, and holding vocab
+#      fixed keeps v6 comparable to any future run on this data.
+#   6. grad_clip_norm 1.0 and bf16 autocast are ours; the paper states neither.
+#
+# ─── Deliberately NOT changed ─────────────────────────────────────────────────
+#   Neighbour-relative margin scoring (to replace raw LaBSE cosine on curated
+#   sources) is deferred — it needs a re-embed of ~174k rows. CURATED_COSINE_CUTOFF
+#   therefore stays 0.0, since a floor on raw cosine provably cannot separate
+#   correct Quran verses from real Gezmu misalignments.
+#
+# Fresh init only.
+run_name: am-en-base-v6
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1              # paper: "dropout rate of 0.1"
+  max_len: 150              # >= prepare.py MAX_LEN; positional table size, not a paper value
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48            # ≈1024 target tokens — see deviation 1
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # inferred from Vaswani et al. (2017); also sets peak LR 6.99e-4
+  label_smoothing: 0.1      # paper: "label smoothing of value 0.1"
+  grad_clip_norm: 1.0
+  accum_steps: 1            # batch_size IS the batch
+  max_steps: 250000         # paper: "250000 steps"
+  amp_dtype: bf16
+  seed: 42
+  # Cadence scaled for a 250k-step run: one 3000-example greedy eval costs ~60-230s
+  # depending on how often the model emits EOS, so every-500 would make the run
+  # mostly eval.
+  save_every_steps: 5000
+  eval_every_steps: 5000
+  # 3000, not v4's 500: v4 selected best.pt via 157 repeated comparisons against the
+  # same 500 examples and overstated true quality by ~3.3 BLEU (subset 29.69 vs full
+  # validation 26.39).
+  eval_subset_size: 3000
+  log_every_steps: 500
+  # Resuming after a host reboot killed the run at step 115,000 (val_bleu 22.75 @
+  # 110k, still improving). Restores model + optimizer + scheduler + step.
+  # NOTE train.py resets best_bleu to -1.0 on resume rather than restoring it, so
+  # the first eval after this WILL overwrite best.pt even if it scores worse than
+  # the pre-reboot best. The step-115,000 best is backed up alongside it as
+  # best_step115000.pt. Set back to null for a fresh run.
+  resume_from: runs/am-en-base-v6/checkpoints/last.pt
+
+inference:
+  # Paper: "Following Wu et al. (2016), we used a beam size of four and a length
+  # penalty of 0.6." Live — see model/search.py. length_penalty is Wu et al.
+  # eq. 14's alpha: lp(Y) = ((5 + |Y|) / 6) ** alpha.
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

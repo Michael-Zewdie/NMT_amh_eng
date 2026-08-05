@@ -9,15 +9,18 @@ hyperparameters, reusable across experiments.
 
 Run (from the project root): python -m model.data.prepare
 
-Note: MAX_LEN here must be >= every training config's model.max_len (the
-positional-encoding table size) — this is the cross-file invariant to keep
-in sync with model/configs/*.yaml.
+Note: MAX_LEN here is the longest sequence that survives, and a config's
+model.max_len is the positional-encoding table it has to index into, so the
+invariant runs model.max_len >= MAX_LEN — not the reverse. (It was previously
+documented backwards here; nothing broke only because model.data.dataset
+independently filtered to max_src_len=128 < 150, masking it.) Keep in sync
+with model/configs/*.yaml.
 """
 import pickle
 
 import pandas as pd
 
-from model.data.tokenizer import BOS_ID, EOS_ID, load_tokenizer
+from model.common import BOS_ID, EOS_ID, load_tokenizer
 from processing.utils.paths import FINAL, PREPARED
 
 SRC_LANG = "am"

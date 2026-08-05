@@ -1,0 +1,40 @@
+# See EXPERIMENTS.md — original run, trained on data pooled at AFRICOMET_CUTOFF=0.5
+# (later found to let through ~50% misaligned pairs). Full-val BLEU 12.57. Superseded.
+run_name: am-en-base
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 128
+  max_tgt_len: 128
+  batch_size: 128
+  num_workers: 8
+
+training:
+  warmup_steps: 4000
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 100000
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 1000
+  eval_every_steps: 1000
+  eval_subset_size: 500
+  log_every_steps: 50
+  resume_from: null
+
+inference:
+  beam_size: 1
+  max_len: 150
+  length_penalty: 1.0

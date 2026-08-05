@@ -1,11 +1,11 @@
 """
 pool.py — Pool per-source processed data and split it into train/val/test.
-Run (from the project root) after the normalize step: python -m processing.pool
+Run (from the project root) after the normalize step: python -m processing.utils.pool
 
 Reads every parallel-text CSV in data/processed/ (am/en sources + nllb's amh/eng,
 normalized to am/en) → apply the quality cutoffs → pool (concat + cross-source dedup
-on am + seeded shuffle) → 80/10/10 split → data/final/. Non-corpus CSVs (e.g.
-website-stats) are skipped.
+on am + seeded shuffle) → drop rows overlapping the held-out benchmarks → 80/10/10
+split → data/final/. Non-corpus CSVs (e.g. website-stats) are skipped.
 
 The LaBSE/LID cutoffs are applied *here*, not in the scoring stages: score_labse
 and score_lid only annotate, leaving every scored row in data/processed/. So
@@ -13,18 +13,27 @@ retuning a threshold is just a re-pool (seconds) rather than a re-embed (hours),
 and a *lower* cutoff brings rows back instead of being unrecoverable.
 
 The split is **stratified by Amharic sentence-length bucket** (short/medium/long,
-from nmt.lengths — the same buckets explore.length_dist reports), so train,
+from processing.dist.lengths — the same buckets processing.dist.length_dist reports), so train,
 validation and test all carry the same length proportions.
+
+Optionally (main(..., stratify_semantic=True), off by default) it is *also*
+stratified by semantic cluster — see split_semantic() below — nesting a k-means
+partition of the English side on top of the length buckets, so train/val/test
+carry the same topic/domain mix too, not just the same length mix. Off by
+default so the plain length-only split (proven, already used to train every
+model in EXPERIMENTS.md) stays available for A/B comparison.
 
 Outputs:
   data/final/train.csv        80/10/10 split, deduplicated, shuffled, length-stratified
   data/final/validation.csv
   data/final/test.csv
 """
+import numpy as np
 import pandas as pd
 
 from processing.utils.paths import PROCESSED, FINAL
-from processing.dist.lengths import LENGTH_CUTOFFS, BUCKETS, bucketize
+from processing.dist.lengths import BUCKETS, bucketize
+from processing.dist.semantics import N_CLUSTERS, cluster_ids
 
 SEED = 42
 
@@ -36,6 +45,22 @@ COSINE_CUTOFF     = 0.8
 AFRICOMET_CUTOFF  = 0.5   # placeholder — needs empirical tuning against real score distributions
 SOURCE_LID_CUTOFF = 0.90
 TARGET_LID_CUTOFF = 0.90
+
+# labse_score and africomet_score are both automated re-checks of alignment/adequacy
+# — the right tool for catching mining errors in nllb.csv/ccaligned.csv, but a poor
+# substitute for the professional human translation these sources already carry.
+# Gezmu et al. (LREC 2022) got 33.0 BLEU on this exact architecture training on all
+# 140k Gezmu pairs, unfiltered — gating 90% of it out on an imperfect QE model's
+# opinion throws away already-validated data. LID stays uniform across every source:
+# it's a basic sanity check (is this row actually am/en), not a quality judgment.
+# religious.csv is an exact verse-ID join of one Amharic Bible against 7 English
+# Bibles (collection/collect_religious.py) — every row is professional human
+# translation of a known verse, with no mining or alignment guesswork, so it
+# belongs in this tier rather than under the mined cutoffs.
+CURATED_SOURCES          = frozenset({"gezmu", "afridoc_health", "afridoc_tech", "quran",
+                                      "religious"})
+CURATED_COSINE_CUTOFF    = 0.0
+CURATED_AFRICOMET_CUTOFF = 0.0
 
 FINAL.mkdir(parents=True, exist_ok=True)
 
@@ -110,10 +135,34 @@ def pool(frames: list[pd.DataFrame], seed: int = SEED) -> pd.DataFrame:
     return deduped.sample(frac=1, random_state=seed).reset_index(drop=True)
 
 
+def decontaminate(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop pooled rows that overlap a held-out benchmark in data/benchmarks/.
+
+    Runs on the pooled corpus rather than per source, so one pass covers every
+    origin, and runs *before* the split so a leaked sentence can't sneak into
+    train via one source while its benchmark twin is being scored.
+
+    Unlike the quality floors above this is not tunable and never optional: the
+    whole point of FLORES/MAFAND is a score comparable to published systems, and
+    a benchmark sentence sitting in train quietly destroys that. If the benchmark
+    directory is empty, processing.utils.decontaminate raises rather than letting
+    the pipeline produce a silently-contaminated split.
+    """
+    from processing.utils.decontaminate import find_contaminated
+
+    mask, matches = find_contaminated(df)
+    n = int(mask.sum())
+    print(f"[pool] benchmark decontamination: {len(df)} → {len(df) - n} ({-n:+d})")
+    if n:
+        print(f"[pool]   by benchmark: {matches['benchmark'].value_counts().to_dict()}")
+        print(f"[pool]   by match kind: {matches['kind'].value_counts().to_dict()}")
+    return df[~mask].reset_index(drop=True)
+
+
 def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[str, pd.DataFrame]:
     """Length-stratified train/val/test split (default 80/10/10) → data/final/.
 
-    Each pair is bucketed by Amharic char length (nmt.lengths); the ratios are
+    Each pair is bucketed by Amharic char length (processing.dist.lengths); the ratios are
     applied *within* every bucket and the pieces recombined, so every split holds
     the same short/medium/long proportions. The pool is already deduped+shuffled,
     so a positional slice inside a bucket is a random draw; each split is then
@@ -151,7 +200,6 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
         s = pd.concat(chunks).sample(frac=1, random_state=seed).reset_index(drop=True)
         splits[name] = s.drop(columns="_bucket")
 
-    # _report(df, splits)
     #Send data to FINAL folder
     for name, part in splits.items():
         path = FINAL / f"{name}.csv"
@@ -160,41 +208,155 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
     return splits
 
 
-# def _report(df: pd.DataFrame, splits: dict[str, pd.DataFrame]) -> None:
-#     """Print each split's length-bucket proportions to confirm they match."""
-#     lo, hi = LENGTH_CUTOFFS
-#     print(f"[pool] length buckets (Amharic chars: short <{lo} | medium | long ≥{hi}) — "
-#           f"proportions should match across splits:")
-#     header = "         " + "".join(f"{b:>10}" for b in BUCKETS) + f"{'n':>10}"
-#     print(header)
-#     for name, part in {"pool": df, **splits}.items():
-#         lengths = part["am"].str.len().to_numpy()
-#         labels = bucketize(lengths)
-#         n = len(part)
-#         cells = "".join(f"{(labels == b).mean() * 100:9.1f}%" for b in BUCKETS)
-#         print(f"  {name:>7}{cells}{n:>10,}")
+def _mean_unit(vecs: np.ndarray) -> np.ndarray:
+    """Mean of a stack of unit vectors, L2-renormalized.
+
+    Plain averaging of unit vectors doesn't produce a unit vector (the mean of
+    two non-parallel unit vectors has norm < 1), and cluster_ids() requires
+    normalized input — see its docstring for why.
+    """
+    m = vecs.mean(axis=0)
+    norm = np.linalg.norm(m)
+    return m / norm if norm > 0 else m
+
+
+def am_cluster_ids(df: pd.DataFrame, k: int = N_CLUSTERS, seed: int = SEED,
+                    embed_tag: str = "mpnet_en") -> dict[str, int]:
+    """One semantic-cluster id per unique am, from k-means over mean-pooled English
+    embeddings.
+
+    split_semantic() clusters on the *English* side (per the project's own
+    request) but still has to group by am for leak-prevention (see split()'s
+    docstring) — a single am can carry several independent English references
+    (e.g. quran.csv's ~15 translator versions per verse), which would otherwise
+    land in different clusters and defeat that grouping. Mean-pooling (then
+    L2-renormalizing) every en embedding sharing an am collapses each group back
+    to one vector before clustering, so every row sharing an am always gets the
+    same cluster id.
+
+    Cache-only and model-free: raises via embed_cache.lookup() if
+    `python -m processing.utils.score_embed` hasn't been run yet for this data.
+    Also used by processing.dist.semantic_dist for its distribution report, so
+    both the split and the report agree on what a "cluster" is.
+    """
+    from processing.utils.embed_cache import lookup
+
+    en_vecs = lookup(df, embed_tag, key_cols=("en",))  # (len(df), dim), row-aligned to df
+
+    tmp = df[["am"]].copy()
+    tmp["_vec"] = list(en_vecs)
+    grouped = tmp.groupby("am")["_vec"].apply(lambda vs: _mean_unit(np.stack(vs)))
+    am_list = grouped.index.to_numpy()
+    am_matrix = np.stack(grouped.to_numpy())
+
+    ids = cluster_ids(am_matrix, k=k, seed=seed)
+    return dict(zip(am_list, ids))
+
+
+def _cut(n: int, ratios) -> tuple[int, int, int]:
+    """(n_train, n_val, n_test) for a stratum of size n, guaranteeing at least 1
+    example in val and in test whenever there's enough to spare without
+    emptying train — the small-cell rule for split_semantic()'s
+    (length-bucket × cluster) cells, which can be much smaller than split()'s
+    length-only buckets.
+
+    A singleton stratum (n == 1) goes entirely to train: there's nothing to
+    guarantee into val/test without either leaking or fabricating data. (The
+    plain int(n * ratio) formula would actually route it to test instead, via
+    the remainder — n_train=int(0.8)=0, n_val=int(0.1)=0, n_test=1-0-0=1 — so
+    this is called out explicitly rather than left as an accident of rounding.)
+    """
+    if n == 1:
+        return 1, 0, 0
+    n_train = int(n * ratios[0])
+    n_val   = int(n * ratios[1])
+    n_test  = n - n_train - n_val
+    if n_val == 0 and n >= 2:
+        n_val = 1
+    if n_test == 0 and n - n_val >= 2:
+        n_test = 1
+    n_train = n - n_val - n_test
+    return n_train, n_val, n_test
+
+
+def split_semantic(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED,
+                    k: int = N_CLUSTERS) -> dict[str, pd.DataFrame]:
+    """Length- *and* semantic-cluster-stratified train/val/test split → data/final/.
+
+    Same shape as split() — bucket, shuffle, cut, recombine, reshuffle, write —
+    but strata are (length bucket × semantic cluster) cells instead of length
+    buckets alone, via am_cluster_ids() above, and cells are cut with _cut()
+    instead of a plain int(n * ratio) (see _cut()'s docstring for why: nested
+    strata are smaller and more likely to round to 0 for val/test).
+
+    Requires the score_embed cache to already cover every row's English text —
+    am_cluster_ids() raises a clear error naming the fix if it doesn't.
+    """
+    df = df.copy()
+    df["_bucket"]  = bucketize(df["am"].str.len().to_numpy())
+    am_cluster = am_cluster_ids(df, k=k, seed=seed)
+    df["_cluster"] = df["am"].map(am_cluster)
+
+    parts: dict[str, list[pd.DataFrame]] = {"train": [], "validation": [], "test": []}
+    for (_b, _c), grp in df.groupby(["_bucket", "_cluster"]):
+        uniq_am = grp["am"].drop_duplicates().sample(frac=1, random_state=seed).reset_index(drop=True)
+        n_train, n_val, _n_test = _cut(len(uniq_am), ratios)
+        train_am = set(uniq_am.iloc[:n_train])
+        val_am   = set(uniq_am.iloc[n_train : n_train + n_val])
+        parts["train"].append(grp[grp["am"].isin(train_am)])
+        parts["validation"].append(grp[grp["am"].isin(val_am)])
+        parts["test"].append(grp[~grp["am"].isin(train_am) & ~grp["am"].isin(val_am)])
+
+    splits = {}
+    for name, chunks in parts.items():
+        s = pd.concat(chunks).sample(frac=1, random_state=seed).reset_index(drop=True)
+        splits[name] = s.drop(columns=["_bucket", "_cluster"])
+
+    for name, part in splits.items():
+        path = FINAL / f"{name}.csv"
+        part.to_csv(path, index=False)
+        print(f"final/{name}: {len(part)} pairs → {path}")
+    return splits
 
 
 def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          cosine_cutoff: float = COSINE_CUTOFF,
          africomet_cutoff: float = AFRICOMET_CUTOFF,
          source_lid_cutoff: float = SOURCE_LID_CUTOFF,
-         target_lid_cutoff: float = TARGET_LID_CUTOFF) -> None:
+         target_lid_cutoff: float = TARGET_LID_CUTOFF,
+         curated_sources: frozenset[str] = CURATED_SOURCES,
+         curated_cosine_cutoff: float = CURATED_COSINE_CUTOFF,
+         curated_africomet_cutoff: float = CURATED_AFRICOMET_CUTOFF,
+         stratify_semantic: bool = False,
+         n_clusters: int = N_CLUSTERS) -> None:
     """Filter every parallel-text CSV in data/processed/ by the quality cutoffs, pool
-    them, and split into data/final/."""
+    them, and split into data/final/.
+
+    curated_sources get curated_cosine_cutoff/curated_africomet_cutoff instead of the
+    standard cutoffs — see the CURATED_SOURCES comment for why. LID cutoffs stay the
+    same for every source.
+
+    stratify_semantic=True nests a semantic-cluster dimension on top of the
+    default length-only stratification — see split_semantic()."""
     # sorted() gives a deterministic order so the cross-source dedup keep="first"
     # and seeded shuffle stay reproducible.
     processed_paths = sorted(PROCESSED.glob("*.csv"))
     if not processed_paths:
-        raise FileNotFoundError(f"No CSVs in {PROCESSED} — run `python process.py` first.")
+        raise FileNotFoundError(f"No CSVs in {PROCESSED} — run `python -m processing.process` first.")
 
     # Pool every parallel-text source: the normalized am/en outputs plus nllb.csv
     # (amh/eng, normalized to am/en). Non-corpus CSVs (e.g. website-stats) are skipped.
-    print(f"[pool] cutoffs: labse_score>{cosine_cutoff}, africomet_score>{africomet_cutoff}, "
+    print(f"[pool] cutoffs (mined): labse_score>{cosine_cutoff}, africomet_score>{africomet_cutoff}, "
+          f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
+    print(f"[pool] cutoffs (curated {sorted(curated_sources)}): "
+          f"labse_score>{curated_cosine_cutoff}, africomet_score>{curated_africomet_cutoff}, "
           f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
     frames = []
     for p in processed_paths:
-        df = load_pairs(p, cosine_cutoff, africomet_cutoff, source_lid_cutoff, target_lid_cutoff)
+        curated = p.stem in curated_sources
+        cos_c = curated_cosine_cutoff if curated else cosine_cutoff
+        afc_c = curated_africomet_cutoff if curated else africomet_cutoff
+        df = load_pairs(p, cos_c, afc_c, source_lid_cutoff, target_lid_cutoff)
         if df is None:
             print(f"[pool] skipping {p.name} (not am/en parallel text)")
         else:
@@ -204,7 +366,11 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
     if not frames:
         raise ValueError(f"No am/en source CSVs found in {PROCESSED}.")
 
-    split(pool(frames, seed=seed), ratios=split_ratios, seed=seed)
+    pooled = decontaminate(pool(frames, seed=seed))
+    if stratify_semantic:
+        split_semantic(pooled, ratios=split_ratios, seed=seed, k=n_clusters)
+    else:
+        split(pooled, ratios=split_ratios, seed=seed)
 
 
 if __name__ == "__main__":

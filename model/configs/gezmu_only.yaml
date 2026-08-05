@@ -1,0 +1,75 @@
+# am-en-gezmu-only — DIAGNOSTIC, not an attempt at a good model.
+#
+# Tests whether in-distribution BLEU is comparable across data compositions.
+# Every in-dist score in EXPERIMENTS.md is measured on a validation split drawn
+# from the same pool the model trained on, which makes it a fit-to-your-own-corpus
+# score rather than a quality score: narrow the pool and the validation set
+# narrows with it, so the exam gets easier at the same time the model gets worse.
+# The degenerate case is a one-sentence corpus — BLEU 100, translates nothing.
+#
+# Data: gezmu only (experiments/gezmu_only.py). 93,649 train pairs, ~83%
+# Watchtower + Bible by Gezmu et al.'s own Table 1 — one narrow register, but
+# 123,838 unique source sentences, so the model must generalize rather than
+# memorize. (quran was rejected for this role: only 2,690 unique Amharic verses
+# carrying 13.9 English translations each, so it would test memorization.)
+#
+# CONTROLLED against am-en-base-v6 — everything below is identical to base_v6.yaml
+# except max_steps and the eval/save cadence. Same architecture, same LR schedule,
+# same warmup (so peak LR is identical, since model/optim.py couples them), same
+# dropout, same eval_subset_size, same tokenizers (deliberately NOT retrained, so
+# vocabulary is held fixed and DATA COMPOSITION IS THE ONLY VARIABLE).
+#
+# max_steps 57,000 matches v6's ~29.35 epochs over a corpus 4.4x smaller
+# (93,649 / 48 = 1,951 steps per epoch x 29.35). Matching epochs rather than
+# steps is the fair comparison: same number of passes over the data.
+#
+# PREDICTION, recorded before running:
+#   in-distribution BLEU well ABOVE v6's 24.73
+#   FLORES well BELOW v6's 17.00 (beam 4) / 15.74 (greedy)
+#   MAFAND well BELOW v6's 7.41 (beam 4) / 6.64 (greedy)
+# If that holds, in-distribution BLEU is confirmed unusable for comparing models
+# trained on different pools, and only the fixed-file benchmarks mean anything.
+# If instead it scores high on BOTH, narrow high-quality data really is the
+# answer and the tiering conclusion needs revisiting.
+#
+# NOTE: reads data/prepared_gezmu/ — see experiments/gezmu_only.py. The training
+# entry point resolves the prepared cache from a module constant, so running this
+# requires that directory to be swapped into place as data/prepared/am-en.
+run_name: am-en-gezmu-only
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # same as v6 -> identical peak LR 6.99e-4
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 57000          # ~29.35 epochs, matching v6's epoch count
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 1000
+  eval_every_steps: 1000
+  eval_subset_size: 3000    # same as v6, so the subset scores are comparable
+  log_every_steps: 200
+  resume_from: null
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

@@ -1,0 +1,42 @@
+# See EXPERIMENTS.md ("small-architecture track") — resumed once, 287k steps total. Best
+# OOD generalization of any run in the project despite a much lower in-domain/subset score:
+# FLORES 13.94/38.02 (near v4's 14.97), MAFAND 6.99/27.45 (beats v4's 6.30). Worth a real
+# head-to-head against the base architecture on the same data snapshot.
+run_name: am-en-small-moderate
+
+model:
+  d_model: 256
+  n_heads: 4
+  n_encoder_layers: 4
+  n_decoder_layers: 4
+  d_ff: 1024
+  dropout: 0.3
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 128
+  max_tgt_len: 128
+  batch_size: 128
+  num_workers: 8
+
+training:
+  warmup_steps: 3000
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 300000
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 1000
+  eval_every_steps: 1000
+  eval_subset_size: 500
+  log_every_steps: 50
+  resume_from: runs/am-en-small-moderate/checkpoints/last.pt
+
+inference:
+  beam_size: 1
+  max_len: 150
+  length_penalty: 1.0

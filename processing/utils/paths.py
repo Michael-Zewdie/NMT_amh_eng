@@ -16,9 +16,12 @@ RAW       = DATA / "raw"
 CSV_RAW   = RAW / "csv_raw"     # collected/merged per-source CSVs
 LOCAL     = RAW / "local"       # local source material (parallel corpora, PDFs)
 NLLB_FULL = RAW / "nllb_full" / "amh_Ethi-eng_Latn.parquet"
+CCALIGNED_FULL = RAW / "ccaligned_full"
+FLORES_FULL = RAW / "flores_full"   # extracted flores200_dataset/ (benchmark source, never trained on)
 
 PROCESSED = DATA / "processed"  # per-source cleaned CSVs, NLLB nllb.csv, dist JSONs
 FINAL     = DATA / "final"      # train/validation/test splits
+BENCHMARKS = DATA / "benchmarks"  # held-out human-translated eval sets, kept out of the training pool
 FIGS      = PROCESSED / "figs"  # generated charts
 SCORES    = DATA / "scores"     # content-keyed model-score caches (see utils.score_cache)
 

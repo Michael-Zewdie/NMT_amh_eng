@@ -25,8 +25,7 @@ import fasttext
 import pandas as pd
 from huggingface_hub import hf_hub_download
 
-from processing.utils.paths import PROCESSED
-from processing.utils.score_cache import scored
+from processing.utils.score_cache import annotate_processed
 
 # fastText LID (lid218e) is very confident on clean, in-script text; aligned rows
 # sit ~0.95-1.0. The floors that consume these scores live in process.py / pool.py —
@@ -73,20 +72,8 @@ def lid_scores(df: pd.DataFrame, am_col: str = "am", en_col: str = "en") -> pd.D
 
 def main() -> None:
     """Add source_lid/target_lid to every am/en CSV in data/processed/, writing back
-    in place; skip nllb.csv (already has these columns) and non-am/en files."""
-    annotated = 0
-    for p in sorted(PROCESSED.glob("*.csv")):
-        if p.name == "nllb.csv":  # ships source_lid/target_lid from Meta already
-            continue
-        df = pd.read_csv(p, dtype=str)
-        if not {"am", "en"}.issubset(df.columns):
-            print(f"[lid] skipping {p.name} (not am/en parallel text)")
-            continue
-        print(f"[lid] scoring {p.name}: {len(df)} rows")
-        df = scored(df, "lid", ["source_lid", "target_lid"], lid_scores)
-        df.to_csv(p, index=False)
-        annotated += 1
-    print(f"\n[lid] annotated {annotated} source(s) → {PROCESSED}")
+    in place; skip nllb.csv (already ships these columns from Meta) and non-am/en files."""
+    annotate_processed("lid", ["source_lid", "target_lid"], lid_scores, skip_files=("nllb.csv",))
 
 
 if __name__ == "__main__":

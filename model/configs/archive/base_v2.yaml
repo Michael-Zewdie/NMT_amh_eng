@@ -1,4 +1,6 @@
-run_name: am-en-baseline
+# See EXPERIMENTS.md — data cleaned to AFRICOMET_CUTOFF=0.62, fresh init, 200k steps.
+# Full-val BLEU 16.60. Superseded by v3/v4.
+run_name: am-en-base-v2
 
 model:
   d_model: 512
@@ -19,15 +21,15 @@ data:
   num_workers: 8
 
 training:
-  warmup_steps: 1000
+  warmup_steps: 4000
   label_smoothing: 0.1
   grad_clip_norm: 1.0
   accum_steps: 1
-  max_steps: 10000
+  max_steps: 200000
   amp_dtype: bf16
   seed: 42
   save_every_steps: 1000
-  eval_every_steps: 500
+  eval_every_steps: 1000
   eval_subset_size: 500
   log_every_steps: 50
   resume_from: null

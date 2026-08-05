@@ -26,8 +26,7 @@ import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer
 
-from processing.utils.paths import PROCESSED
-from processing.utils.score_cache import scored
+from processing.utils.score_cache import annotate_processed
 
 # LaBSE cosine ranges 0-1; aligned pairs typically score ~0.6-0.9. The cutoff that
 # consumes this score lives in process.py / pool.py — this file does not filter.
@@ -58,17 +57,7 @@ def main() -> None:
     """Add labse_score to every am/en CSV in data/processed/, writing back in place;
     skip non-corpus files (by columns) and rows that already carry laser_score
     (by content, via score_cache's skip_where)."""
-    annotated = 0
-    for p in sorted(PROCESSED.glob("*.csv")):
-        df = pd.read_csv(p, dtype=str)
-        if not {"am", "en"}.issubset(df.columns):
-            print(f"[labse] skipping {p.name} (not am/en parallel text)")
-            continue
-        print(f"[labse] scoring {p.name}: {len(df)} rows")
-        df = scored(df, "labse", ["labse_score"], labse_similarity, skip_where="laser_score")
-        df.to_csv(p, index=False)
-        annotated += 1
-    print(f"\n[labse] annotated {annotated} source(s) → {PROCESSED}")
+    annotate_processed("labse", ["labse_score"], labse_similarity, skip_where="laser_score")
 
 
 if __name__ == "__main__":

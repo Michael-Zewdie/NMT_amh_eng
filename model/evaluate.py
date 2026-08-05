@@ -1,98 +1,95 @@
 """
-model.evaluate — greedy decode + sacrebleu corpus BLEU on a data split.
+model.evaluate — decode + sacrebleu corpus BLEU on a data split.
 
 Run (from the project root): python -m model.evaluate [config_path] [checkpoint_path] [split]
-Defaults: model/configs/base.yaml, <run_dir>/checkpoints/last.pt, "validation".
+Defaults: model/configs/base_v6.yaml, <run_dir>/checkpoints/last.pt, "validation".
 
-v1 uses greedy decoding (argmax at every step, no KV cache) — simple and
-correct, not fast. Beam search and KV-caching are deferred fast-follows, not
-in scope here. Batch-level early stopping: the decode loop exits once every
-sequence in the batch has produced EOS, rather than always running to
-inference.max_len.
+Decoding strategy comes from `inference.beam_size` in the config (see
+model.search): 1 is greedy, >1 is beam search with `inference.length_penalty`.
+Neither uses a KV cache, so both re-run the decoder over the full prefix each
+step — correct, not fast. Batch-level early stopping: the loop exits once every
+sequence has produced EOS, rather than always running to inference.max_len.
 """
 import sys
 
 import sacrebleu
 import torch
 
-from model.checkpoint import load_checkpoint
+from model.common import describe_decoding, load_for_inference, load_tokenizer
+from model.config import Config
 from model.data.dataset import make_dataloader
-from model.data.tokenizer import BOS_ID, EOS_ID, PAD_ID, load_tokenizer
-from model.transformer import Seq2SeqTransformer
-from model.utils.common import get_device
-from model.utils.config import Config, load_config
-from processing.utils.paths import RUNS
+from model.search import decode
 
-DEFAULT_CONFIG = "model/configs/base.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"
 
 
-@torch.no_grad()
-def greedy_decode(model, src: torch.Tensor, src_pad_mask: torch.Tensor, max_len: int) -> torch.Tensor:
-    model.eval()
-    device = src.device
-    B = src.size(0)
-    memory = model.encode(src, src_pad_mask)
+def corpus_scores(hyps: list[str], refs: list[str]) -> dict[str, float]:
+    """Corpus BLEU + chrF++ for a hypothesis/reference list pair.
 
-    generated = torch.full((B, 1), BOS_ID, dtype=torch.long, device=device)
-    finished = torch.zeros(B, dtype=torch.bool, device=device)
+    The single scoring function for the whole project, so our model and any
+    external baseline (model.evaluate_benchmark, baselines.google_translate) are
+    never compared across different metric settings — the usual way MT numbers
+    end up quietly incomparable.
 
-    for _ in range(max_len - 1):
-        tgt_pad_mask = generated == PAD_ID
-        decoded = model.decode(generated, tgt_pad_mask, memory, src_pad_mask)
-        next_token = model.generator(decoded[:, -1, :]).argmax(dim=-1)  # [B]
-        next_token = torch.where(finished, torch.full_like(next_token, PAD_ID), next_token)
+    Default sacrebleu tokenization (13a) is correct for an English target. A
+    future en->am direction will need tokenize="none" — no Amharic-aware
+    tokenizer exists in sacrebleu.
 
-        generated = torch.cat([generated, next_token.unsqueeze(1)], dim=1)
-        finished = finished | (next_token == EOS_ID)
-        if finished.all():
-            break
+    chrF++ (chrF with word_order=2) is reported alongside BLEU because it is what
+    FLORES-200 tables use, and because character n-grams degrade more gracefully
+    than word n-grams when a system is weak — a low-BLEU model can still show
+    real signal in chrF++.
+    """
+    return {
+        "bleu": sacrebleu.corpus_bleu(hyps, [refs]).score,
+        "chrf++": sacrebleu.corpus_chrf(hyps, [refs], word_order=2).score,
+    }
 
-    return generated
 
-
-def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.device) -> float:
+def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.device,
+                    beam_size: int | None = None) -> float:
     """Corpus BLEU over an already-built DataLoader. Shared by evaluate_split
     (a full data split, e.g. for a standalone post-training run) and
-    model.train's periodic in-training eval (a small fixed subset, since
-    greedy decode has no KV cache and is too slow to run on a full split
-    every eval_every_steps)."""
+    model.train's periodic in-training eval (a small fixed subset, since decode
+    has no KV cache and is too slow to run on a full split every
+    eval_every_steps).
+
+    `beam_size` overrides `cfg.inference.beam_size`. model.train passes 1 so
+    in-training eval stays greedy no matter how the run will finally be scored:
+    beam search costs ~beam_size times as much, and a config asking for beam 4
+    would otherwise quadruple every periodic eval — turning a 250k-step run into
+    mostly eval. Checkpoint selection therefore compares greedy scores against
+    greedy scores, which is the comparison that matters for picking best.pt.
+    """
     hyps: list[str] = []
     refs: list[str] = []
     model.eval()
     for batch in loader:
         batch = batch.to(device)
-        generated = greedy_decode(model, batch.src, batch.src_pad_mask, cfg.inference.max_len)
+        generated = decode(model, batch.src, batch.src_pad_mask, cfg, beam_size=beam_size)
         hyps.extend(tgt_tokenizer.decode(ids, skip_special_tokens=True) for ids in generated.tolist())
 
         full_tgt = torch.cat([batch.tgt_in[:, :1], batch.tgt_out], dim=1)  # reconstruct [BOS, ..., EOS]
         refs.extend(tgt_tokenizer.decode(ids, skip_special_tokens=True) for ids in full_tgt.tolist())
 
-    # Default sacrebleu tokenization (13a) is correct for an English target.
-    # A future en->am direction will need tokenize="none" — no Amharic-aware
-    # tokenizer exists in sacrebleu.
-    return sacrebleu.corpus_bleu(hyps, [refs]).score
+    return corpus_scores(hyps, refs)["bleu"]
 
 
-def evaluate_split(model, split: str, cfg: Config, device: torch.device) -> float:
+def evaluate_split(model, split: str, cfg: Config, device: torch.device,
+                   beam_size: int | None = None) -> float:
     tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
     loader = make_dataloader(split, cfg, shuffle=False)
-    return evaluate_loader(model, loader, tgt_tokenizer, cfg, device)
+    return evaluate_loader(model, loader, tgt_tokenizer, cfg, device, beam_size=beam_size)
 
 
 def main() -> None:
     config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG
-    cfg = load_config(config_path)
-    checkpoint_path = sys.argv[2] if len(sys.argv) > 2 else str(RUNS / cfg.run_name / "checkpoints" / "last.pt")
+    checkpoint_path = sys.argv[2] if len(sys.argv) > 2 else None
     split = sys.argv[3] if len(sys.argv) > 3 else "validation"
 
-    device = get_device()
-    src_tokenizer = load_tokenizer(cfg.data.src_lang)
-    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
-    model = Seq2SeqTransformer.from_config(cfg, src_tokenizer.get_vocab_size(), tgt_tokenizer.get_vocab_size(), PAD_ID, device)
-    load_checkpoint(checkpoint_path, model, map_location=device)
-
-    score = evaluate_split(model, split, cfg, device)
-    print(f"[evaluate] {split} BLEU: {score:.2f}")
+    cfg, model, _, _, device = load_for_inference(config_path, checkpoint_path)
+    print(f"[evaluate] decoding: {describe_decoding(cfg)}")
+    print(f"[evaluate] {split} BLEU: {evaluate_split(model, split, cfg, device):.2f}")
 
 
 if __name__ == "__main__":

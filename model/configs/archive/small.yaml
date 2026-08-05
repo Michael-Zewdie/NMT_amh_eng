@@ -1,0 +1,40 @@
+# See EXPERIMENTS.md ("small-architecture track") — 80k steps. Periodic-eval peak 25.38
+# BLEU @ step 67200. FLORES 10.09/34.95, MAFAND 4.84/25.92.
+run_name: am-en-small
+
+model:
+  d_model: 256
+  n_heads: 4
+  n_encoder_layers: 4
+  n_decoder_layers: 4
+  d_ff: 1024
+  dropout: 0.3
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 128
+  max_tgt_len: 128
+  batch_size: 128
+  num_workers: 8
+
+training:
+  warmup_steps: 1500
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 80000
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 800
+  eval_every_steps: 800
+  eval_subset_size: 500
+  log_every_steps: 50
+  resume_from: null
+
+inference:
+  beam_size: 1
+  max_len: 150
+  length_penalty: 1.0

@@ -1,0 +1,115 @@
+# am-en-base-v5 — replication of Gezmu, Nürnberger & Bati, "Extended Parallel
+# Corpus for Amharic-English Machine Translation" (arXiv:2104.03543v3, LREC 2022).
+#
+# Supersedes the earlier v5 (four coupled recipe changes, stopped at step 6,350/15,000
+# and never benchmarked — run dir deleted, log kept at runs/v5_train.superseded.log).
+# The point of this run is NOT to invent a recipe: it is to reproduce the only
+# published from-scratch system on this exact language pair, so our numbers sit on
+# a line someone else already drew.
+#
+# ─── Paper §4.2, verbatim ──────────────────────────────────────────────────────
+#   "The hyperparameters include the Adam optimizer with varied learning rate over
+#    the course of training, dropout rate of 0.1, label smoothing of value 0.1,
+#    batch size of 1024, six Transformer blocks with eight heads, filter size of
+#    2048, and hidden size of 512. We used tensor2tensor library to implement the
+#    system."
+#   "We trained, thus, each NMT model for 250000 steps following Vaswani et al. (2017)."
+#   "For decoding, we used a single model obtained by averaging the last twelve
+#    checkpoints. Following Wu et al. (2016), we used a beam size of four and a
+#    length penalty of 0.6."
+#
+# Their result to beat: am→en 33.0 BLEU (NMT-8K, Table 3) — on THEIR own 2,500-pair
+# in-domain test split with 140,000 training pairs. That is comparable to our own
+# in-distribution validation BLEU, NOT to FLORES/MAFAND.
+#
+# ─── Matched exactly ──────────────────────────────────────────────────────────
+#   d_model 512 · n_heads 8 · 6+6 blocks · d_ff 2048 · dropout 0.1 ·
+#   label_smoothing 0.1 · 250,000 steps · Adam(0.9, 0.98, eps=1e-9) via model/optim.py ·
+#   inverse-sqrt "varied learning rate" · tied embedding/softmax (t2t's
+#   shared_embedding_and_softmax_weights default) · 8k subword vocabulary
+#   (their best am→en point was NMT-8K, which is what our tokenizers now use)
+#
+# ─── Inferred, because the paper does not state it ────────────────────────────
+#   warmup_steps 4000 — the paper says only "varied learning rate ... following
+#   Vaswani et al. (2017)", and 4000 is Vaswani's value. NOTE this is not a free
+#   knob here: model/optim.py couples peak LR to warmup as
+#   d_model^-0.5 * warmup^-0.5, so 4000 also fixes peak LR at 7.0e-4.
+#
+# ─── Known deviations — read before writing up any comparison ─────────────────
+#   1. batch_size: the paper says "1024", but in tensor2tensor batch_size counts
+#      SUBWORD TOKENS, not sentences. Measured over data/prepared/am-en/train.pkl,
+#      the mean target sequence is 21.13 tokens (409,443 pairs, BOS/EOS included),
+#      so 48 sentences ≈ 1,014 target tokens — the closest integer to the paper's
+#      1024. Deliberate choice of the literal t2t reading; accum_steps stays 1 so
+#      the optimizer step IS the batch. At 48/step, 250k steps ≈ 29 epochs over our
+#      pool. Caveat: 7.0e-4 peak LR was tuned for ~25k-token batches, so if loss
+#      diverges in the first few thousand steps this is the first thing to suspect.
+#   2. (resolved) Beam search now IS implemented — model/search.py, beam 4 with
+#      the Wu et al. GNMT length penalty, matching the paper. One caveat: the
+#      periodic in-training eval deliberately stays greedy (model/train.py passes
+#      beam_size=1), because beam costs ~4x and would dominate a 250k-step run.
+#      So best.pt is selected on greedy scores and final scoring uses beam — the
+#      selection is self-consistent, but a checkpoint that is best under greedy is
+#      not guaranteed to be best under beam.
+#   3. Checkpoint averaging of the last 12 checkpoints is not implemented. The
+#      paper decoded with an average, we decode with a single best.pt.
+#   4. model/optim.py uses AdamW (torch default weight_decay=0.01). Vaswani and
+#      t2t used plain Adam, no weight decay. One-line fix in optim.py, but it is
+#      shared by every run, so it is left alone rather than silently changed here.
+#   5. Different data. They trained on 140,000 pairs from their own corpus; we
+#      train on the pooled ~409k. Same recipe, different corpus — an intentional
+#      difference, but it means a gap vs. 33.0 is not purely a recipe gap.
+#   6. Different subword algorithm: they used tensor2tensor word-piece with a
+#      shared vocabulary; we use separate per-language tokenizers (English
+#      ByteLevel BPE, Amharic Unigram), both 8k.
+#   7. grad_clip_norm 1.0 and bf16 autocast are ours; the paper states neither.
+#
+# Fresh init required — nothing to resume from.
+run_name: am-en-base-v5
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1              # paper: "dropout rate of 0.1"
+  max_len: 150              # >= prepare.py MAX_LEN; positional table size, not a paper value
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  # ≈1024 target tokens per optimizer step — the literal tensor2tensor reading of
+  # the paper's "batch size of 1024". See deviation 1 above.
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # inferred from Vaswani et al. (2017); also sets peak LR 7.0e-4
+  label_smoothing: 0.1      # paper: "label smoothing of value 0.1"
+  grad_clip_norm: 1.0
+  accum_steps: 1            # batch_size IS the batch; no accumulation
+  max_steps: 250000         # paper: "250000 steps"
+  amp_dtype: bf16
+  seed: 42
+  # Cadence scaled for a 250k-step run: at v4's every-500 this would be 500 evals,
+  # and one 3000-example greedy eval costs ~250s — the run would be mostly eval.
+  save_every_steps: 5000
+  eval_every_steps: 5000
+  # 3000, not v4's 500: v4 selected best.pt via 157 repeated comparisons against the
+  # same 500 examples and overstated true quality by ~3.3 BLEU (subset 29.69 vs full
+  # validation 26.39).
+  eval_subset_size: 3000
+  log_every_steps: 500
+  resume_from: null
+
+inference:
+  # Paper: "Following Wu et al. (2016), we used a beam size of four and a length
+  # penalty of 0.6." Live — see model/search.py. length_penalty is Wu et al.
+  # eq. 14's alpha: lp(Y) = ((5 + |Y|) / 6) ** alpha.
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

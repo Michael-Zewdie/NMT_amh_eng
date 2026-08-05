@@ -4,8 +4,8 @@ one of the given registered domains. Edits the file in place (regenerable via
 process.py). Standalone manual tool — not a process.py stage.
 
 Usage (from the project root):
-       python -m processing.remove_domain <domain> [more domains ...]
-       python -m processing.remove_domain blogspot.com scribd.com
+       python -m processing.random.remove_domain <domain> [more domains ...]
+       python -m processing.random.remove_domain blogspot.com scribd.com
 """
 import sys
 
@@ -31,5 +31,5 @@ def remove(targets: list[str]) -> None:
 if __name__ == "__main__":
     targets = sys.argv[1:]
     if not targets:
-        sys.exit("usage: python -m processing.remove_domain <domain> [more domains ...]")
+        sys.exit("usage: python -m processing.random.remove_domain <domain> [more domains ...]")
     remove(targets)

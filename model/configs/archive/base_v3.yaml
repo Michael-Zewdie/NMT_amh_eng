@@ -1,4 +1,7 @@
-run_name: am-en-base
+# See EXPERIMENTS.md — AFRICOMET_CUTOFF=0.80 uniform (incl. curated sources — later found
+# to over-filter them), + CCAligned added, 35k steps. Full-val BLEU 26.24, FLORES 14.25,
+# MAFAND 6.17. Superseded by v4 (tiered cutoffs).
+run_name: am-en-base-v3
 
 model:
   d_model: 512
@@ -23,7 +26,7 @@ training:
   label_smoothing: 0.1
   grad_clip_norm: 1.0
   accum_steps: 1
-  max_steps: 100000
+  max_steps: 35000
   amp_dtype: bf16
   seed: 42
   save_every_steps: 1000

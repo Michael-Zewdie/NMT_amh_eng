@@ -1,0 +1,101 @@
+# Which run belongs to which experiment, and what each experiment was asking.
+#
+# Hand-maintained — this is the ONE file that records intent, because intent is
+# the thing no script can recover from a checkpoint. Everything else under
+# results/ is machine-written by model/rescore.py and must not be edited.
+#
+# `python -m model.results` groups by these headings.
+# `python -m model.results domain-breadth` prints one experiment.
+#
+# A run listed here but absent from results/benchmarks.csv has not been
+# re-scored — either it has no checkpoint (the pre-v4 runs were never kept) or
+# it failed to load. The table marks it rather than silently dropping it.
+
+domain-breadth:
+  question: >
+    Does the DOMAIN BREADTH of the training corpus trade in-distribution BLEU
+    against out-of-distribution generalization? Two arms, matched to within 18
+    training pairs, identical filtering (AfriCOMET>0.50, LID>0.90), identical
+    architecture/schedule/seed. Domain breadth is the only variable.
+  hypothesis: >
+    narrow -> HIGHER in-distribution, WORSE OOD.  broad -> LOWER in-distribution,
+    BETTER OOD.
+  verdict: >
+    CONFIRMED. narrow 26.63 in-dist / 0.68 FLORES; broad 5.05 in-dist / 3.02
+    FLORES. A complete rank reversal — which model is "better" depends entirely
+    on which number you read.
+  runs:
+    - am-en-narrow      # bible-uedin, 41,832 train pairs, one register
+    - am-en-broad       # NLLB mined,  41,850 train pairs, ~1,300 web domains
+
+large-domain-breadth:
+  question: >
+    The domain-breadth test again at 2.8x the size, because narrow-vs-broad ran at
+    ~42k pairs where both arms sat near the FLORES floor and a 2.3 BLEU gap is
+    thin evidence. Arms are 34 training pairs apart, identical in architecture,
+    optimizer, dropout, seed, step count, tokenizers and split.
+  hypothesis: >
+    religious (narrow) -> HIGHER in-distribution, WORSE OOD.
+    nllb-146k (broad)  -> LOWER in-distribution, BETTER OOD.
+  note: >
+    NOT the shared-threshold design domain_breadth.py used. The broad arm gets
+    NLLB's TOP 147,048 rows by AfriCOMET (0.843-1.020) while the narrow arm keeps
+    everything above a 0.15 garbage floor — the broad arm is handed its best data.
+    A narrow win on in-distribution is therefore strong; a broad win on OOD is
+    correspondingly weaker. Also: dropout is 0.2 here, not the 0.1 of the
+    v6/narrow/broad chain, so these two are comparable to each other and only
+    benchmark-comparable to the rest.
+    The narrow arm's 117,658 pairs carry only 26,516 unique Amharic verses.
+  runs:
+    - am-en-religious   # 1 Amharic Bible x 7 English Bibles, verse-ID joined
+    - am-en-nllb-146k   # NLLB mined bitext, highest-AfriCOMET rows
+
+volume-vs-composition:
+  question: >
+    am-en-gezmu-only changed two things at once against v6 — it narrowed the
+    domain AND cut volume 4.4x. These arms hold volume fixed at ~93.6k so
+    composition can be read on its own.
+  runs:
+    - am-en-gezmu-only  # narrow, curated
+    - am-en-nllb-93k    # diverse, mined
+    - am-en-mixed-93k   # diverse, all sources (INCOMPLETE — killed by reboot)
+
+baseline-progression:
+  question: >
+    The main line of work: successive corpora and recipes for the same
+    architecture. v6 is the Gezmu et al. (arXiv:2104.03543) replication.
+  runs:
+    - am-en-base-v6     # Gezmu replication, 408,826 train pairs
+    - am-en-base-v5
+    - am-en-base-v4     # 32k tokenizers — see data.src_tokenizer in its config
+
+backtranslation:
+  question: >
+    en->am model to generate synthetic source text from monolingual English.
+  note: >
+    NOT re-scored. corpus_scores uses sacrebleu's 13a tokenizer, which is correct
+    for an English target and wrong for an Amharic one. Scoring this direction
+    with the shared function would produce a confidently meaningless number.
+  runs:
+    - en-am-base-v1     # INCOMPLETE — killed by reboot at step 50,000/250,000
+
+legacy-unverifiable:
+  question: >
+    Runs whose checkpoints were not kept. Their stored .hyp.txt files still
+    score, but nothing can regenerate them, so they cannot be compared against
+    re-scored rows.
+  note: >
+    Their stored numbers are believed sound — every run that COULD be re-scored
+    reproduced its stored score exactly (v6 17.35/42.06, v4 14.97/41.00, broad
+    3.02/21.58). What these rows lack is a recorded decoding strategy: a
+    strategy-less .hyp.txt does not say whether it was greedy or beam, and v4's
+    stored 14.97 turned out to be greedy while v6's stored 17.35 was beam 4. So
+    read this group as greedy-or-unknown, and never against a beam4 column.
+  runs:
+    - am-en-base-v3
+    - am-en-base-v2
+    - am-en-base
+    - am-en-baseline
+    - am-en-small
+    - am-en-small-moderate
+    - am-en-small-strict

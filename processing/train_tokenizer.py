@@ -13,7 +13,12 @@ from tokenizers import ByteLevelBPETokenizer
 
 from processing.utils.paths import FINAL, TOKENIZER_EN
 
-VOCAB_SIZE = 32000
+# 8k, not 32k: at 32k the median English token type occurred only 22 times in
+# data/final/train.csv's 7.9M running tokens and 83% of the vocab appeared <=100
+# times, leaving most of the (tied) embedding/output matrix barely trained. 8k is
+# the knee — 12% of types under 100 occurrences, vs 60% at 16k — and costs only
+# ~10% more tokens per sentence. See EXPERIMENTS.md (am-en-base-v5).
+VOCAB_SIZE = 8000
 MIN_FREQUENCY = 2
 SPECIAL_TOKENS = ["<pad>", "<unk>", "<s>", "</s>"]
 

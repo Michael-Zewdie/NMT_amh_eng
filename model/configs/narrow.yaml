@@ -1,0 +1,66 @@
+# am-en-narrow — NARROW arm of the DOMAIN-BREADTH experiment.
+#
+# HYPOTHESIS:
+#   narrow training domain -> HIGHER in-distribution BLEU, WORSE OOD
+#   broad  training domain -> LOWER  in-distribution BLEU, BETTER OOD
+#
+# Two arms, identical in every respect except the domain breadth of the training
+# text. Built by experiments/domain_breadth.py.
+#
+#   narrow  bible-uedin (OPUS)  47,756 train  one book, one register
+#   broad   NLLB mined bitext   47,761 train  ~1,300 effective web domains
+#
+# Pinned across both arms: corpus size (matched to within 5 pairs), tokenizers
+# (NOT retrained -> vocabulary fixed), architecture, LR, warmup (so peak LR is
+# identical at 6.99e-4), dropout, seed, step count, cleaning kernel, and the
+# 80/10/10 length-stratified am-grouped split.
+#
+# max_steps 29000 = ~29 epochs over 47.8k pairs at 48/step, matching the epoch
+# count of am-en-base-v6 and am-en-gezmu-only so training length is not a variable.
+#
+# Each arm is scored on ITS OWN validation split (that is what "in-distribution"
+# means) and on the SAME fixed FLORES/MAFAND files.
+#
+# Known asymmetry, stated not hidden: NLLB rows have passed LASER+LID+AfriCOMET
+# filtering; bible-uedin gets only clean(). Both are high quality by construction
+# but not filtered identically. This varies domain breadth, not provenance quality.
+#
+# Reads data/prepared_narrow/ — swapped into place as data/prepared/am-en.
+run_name: am-en-narrow
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # same as v6 -> identical peak LR 6.99e-4
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 29000          # ~29.35 epochs, matching v6's epoch count
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 1000
+  eval_every_steps: 1000
+  eval_subset_size: 3000    # same as v6, so the subset scores are comparable
+  log_every_steps: 200
+  resume_from: null
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

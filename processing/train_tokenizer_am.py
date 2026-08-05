@@ -13,7 +13,12 @@ from tokenizers.implementations import SentencePieceUnigramTokenizer
 
 from processing.utils.paths import FINAL, TOKENIZER_AM
 
-VOCAB_SIZE = 32000
+# 8k, not 32k — same rationale as the English side (processing/train_tokenizer.py):
+# at 32k the median Amharic type occurred 43 times and 77% of the vocab appeared
+# <=100 times. 8k also raises fertility 1.35 -> 1.68 pieces/word, which is the point
+# for a morphologically rich language: inflected forms get composed from morpheme-ish
+# pieces instead of memorized whole. See EXPERIMENTS.md (am-en-base-v5).
+VOCAB_SIZE = 8000
 SPECIAL_TOKENS = ["<pad>", "<unk>", "<s>", "</s>"]
 
 

@@ -1,0 +1,76 @@
+# am-en-religious — NARROW arm of the large-scale domain-breadth replication.
+#
+# Data: data/prepared_religious/ (experiments/religious_vs_nllb.py).
+#   117,658 train pairs = one Amharic Bible x 7 English Bibles, joined on canonical
+#   verse IDs. Every pair is professional human translation of a known verse.
+#   CAVEAT that the pair count hides: only 26,516 unique Amharic verses. Volume is
+#   ~5.6 English renderings per verse, not new source material. The split is
+#   am-grouped so no verse straddles train/validation, but source-side coverage is
+#   far below what 117k suggests.
+#
+# Paired with model/configs/nllb_146k.yaml — identical in every field except
+# run_name and prepared_dir. Domain breadth is the only variable between them.
+#
+# HYPERPARAMETERS: chosen for a ~118k-pair corpus, NOT copied from base_v6.yaml
+# (409k pairs). Two deliberate departures from the v6/narrow/broad chain:
+#
+#   dropout 0.2 (not 0.1) — 118k pairs against ~65M parameters overfits at 0.1.
+#     am-en-narrow showed it plainly: train loss fell while val_loss rose 5.61 ->
+#     5.69 over its last 6k steps. 0.2 is the standard remedy at this scale
+#     (cf. Sennrich & Zhang 2019 on low-resource NMT).
+#   max_steps 61000 — 117,658/48 = 2,451 steps/epoch, so ~25 epochs. Matching
+#     v6's ~29 epochs was the convention for the 93k arms; 25 is close enough to
+#     that and saves ~1h per arm.
+#
+# CONSEQUENCE, stated rather than discovered later: changing dropout breaks the
+# controlled chain with am-en-base-v6 / narrow / broad. These two arms are
+# rigorously comparable TO EACH OTHER. Against the older runs they are comparable
+# only on the fixed benchmarks (FLORES/MAFAND), and there as "best system at this
+# size", not as a controlled ablation.
+#
+# PREDICTION, recorded before running:
+#   in-distribution BLEU HIGH — above v6's 24.79, plausibly above narrow's 26.63,
+#     since the register is tight and the model has 2.8x narrow's data.
+#   FLORES/MAFAND LOW — well under v6, though far above narrow's 0.68, because
+#     26.5k unique verses is real coverage where narrow's ~24k was not enough.
+#   If instead FLORES lands near v6's 17.35, the domain-breadth story is wrong at
+#   scale and the 42k result was a data-starvation artifact, not a breadth effect.
+run_name: am-en-religious
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.2
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  prepared_dir: data/prepared_religious
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 48
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # peak LR 6.99e-4, coupled in model/optim.py
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 61000          # ~25 epochs over 117,658 pairs
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 2000
+  eval_every_steps: 2000
+  eval_subset_size: 3000
+  log_every_steps: 200
+  resume_from: null
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6
