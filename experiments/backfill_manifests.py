@@ -47,6 +47,15 @@ GIT = git_info()  # current HEAD — NOT the commit that actually produced these
                    # "backfill_git", distinct from a live run's "git" field.
 
 # run_name -> config path (every run maps 1:1 via each yaml's own run_name: field)
+# NOTE: as of the 2026-08-07 v2 archive pass, everything below except base-v4,
+# base-v6, and gezmu-only lives under archive/ (archive/model/configs/ for the
+# per-track configs this script never touched, archive/runs/ for the run dirs
+# themselves — model/configs/archive/ is the one exception, pre-existing and
+# left in place since model/common.py's find_config() reads it directly). This
+# script was a ONE-TIME backfill that already ran (see every archived run's
+# manifest.json, "backfilled": true) — paths updated so a future re-run loads
+# correctly rather than crashing on a moved file, not because this needs to
+# run again.
 CONFIG_PATHS = {
     "am-en-base":            "model/configs/archive/base.yaml",
     "am-en-baseline":        "model/configs/archive/baseline.yaml",
@@ -55,17 +64,17 @@ CONFIG_PATHS = {
     "am-en-base-v4":         "model/configs/base_v4.yaml",
     "am-en-base-v5":         "model/configs/archive/base_v5.yaml",
     "am-en-base-v6":         "model/configs/base_v6.yaml",
-    "am-en-broad":           "model/configs/broad.yaml",
+    "am-en-broad":           "archive/model/configs/broad.yaml",
     "am-en-gezmu-only":      "model/configs/gezmu_only.yaml",
-    "am-en-mixed-93k":       "model/configs/mixed_93k.yaml",
-    "am-en-narrow":          "model/configs/narrow.yaml",
-    "am-en-nllb-146k":       "model/configs/nllb_146k.yaml",
-    "am-en-nllb-93k":        "model/configs/nllb_93k.yaml",
-    "am-en-religious":       "model/configs/religious.yaml",
+    "am-en-mixed-93k":       "archive/model/configs/mixed_93k.yaml",
+    "am-en-narrow":          "archive/model/configs/narrow.yaml",
+    "am-en-nllb-146k":       "archive/model/configs/nllb_146k.yaml",
+    "am-en-nllb-93k":        "archive/model/configs/nllb_93k.yaml",
+    "am-en-religious":       "archive/model/configs/religious.yaml",
     "am-en-small":           "model/configs/archive/small.yaml",
     "am-en-small-moderate":  "model/configs/archive/small_moderate.yaml",
     "am-en-small-strict":    "model/configs/archive/small_strict.yaml",
-    "en-am-base-v1":         "model/configs/reverse_en_am.yaml",
+    "en-am-base-v1":         "archive/model/configs/reverse_en_am.yaml",
 }
 
 _EXP_MD = "EXPERIMENTS.md"
