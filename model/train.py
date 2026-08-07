@@ -24,7 +24,10 @@ from model.transformer import Seq2SeqTransformer
 from processing.utils.paths import RUNS, PREPARED
 from processing.utils.manifest import write_manifest, read_manifest, git_info, now
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale since the 2026-08-07 v2
+# archive pass moved this file to archive/model/configs/base_v6.yaml — no
+# current default config exists until v2's first config is written; pass one
+# explicitly (sys.argv[1]) until this constant is repointed.
 
 
 def make_eval_subset_loader(cfg: Config) -> DataLoader:

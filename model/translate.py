@@ -17,7 +17,8 @@ from model.config import Config
 from model.search import decode
 from processing.clean.normalize import normalize
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale, see model/train.py's
+# DEFAULT_CONFIG comment — moved to archive/ in the 2026-08-07 v2 archive pass.
 
 
 def normalize_source(text: str) -> str:

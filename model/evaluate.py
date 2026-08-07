@@ -20,7 +20,8 @@ from model.config import Config
 from model.data.dataset import make_dataloader
 from model.search import decode
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"
+DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale, see model/train.py's
+# DEFAULT_CONFIG comment — moved to archive/ in the 2026-08-07 v2 archive pass.
 
 
 def corpus_scores(hyps: list[str], refs: list[str]) -> dict[str, float]:
