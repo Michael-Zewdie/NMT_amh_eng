@@ -62,7 +62,7 @@ SPLIT           = (0.8, 0.1, 0.1)   # train / validation / test ratios
 # by default so the plain length-only split stays the reproducible default;
 # flip it on deliberately to A/B against every model trained so far.
 N_CLUSTERS         = 16
-STRATIFY_SEMANTIC  = False
+STRATIFY_SEMANTIC  = True
 
 # Every CSV to clean (collect.py put them all here, nllb.csv included).
 CSV_SOURCES = sorted(CSV_RAW.glob("*.csv"))

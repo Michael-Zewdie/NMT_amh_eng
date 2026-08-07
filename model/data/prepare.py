@@ -17,6 +17,7 @@ independently filtered to max_src_len=128 < 150, masking it.) Keep in sync
 with model/configs/*.yaml.
 """
 import pickle
+import shutil
 
 import pandas as pd
 
@@ -57,6 +58,18 @@ def main() -> None:
 
         with open(out_dir / f"{split}.pkl", "wb") as f:
             pickle.dump({"src": kept_src, "tgt": kept_tgt}, f)
+
+    # FINAL/manifest.json (written by processing.utils.pool / experiments.domain_breadth)
+    # records what data/thresholds built this split. Copy it forward so it survives
+    # the manual "swap this arm's data into data/prepared/am-en" step every experiment
+    # here does — otherwise the record of what's *currently* prepared is lost the
+    # moment a different arm gets swapped in after it. See processing.utils.manifest.
+    src_manifest = FINAL / "manifest.json"
+    if src_manifest.exists():
+        shutil.copy(src_manifest, out_dir / "manifest.json")
+        print(f"[prepare] copied {src_manifest} -> {out_dir / 'manifest.json'}")
+    else:
+        print(f"[prepare] WARNING: no {src_manifest} — prepared cache has no data provenance record")
 
     print(f"[prepare] wrote caches to {out_dir}")
 

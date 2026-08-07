@@ -46,6 +46,7 @@ import pandas as pd
 from model.common import BOS_ID, EOS_ID, load_tokenizer
 from processing.utils import pool as pool_mod
 from processing.utils.paths import DATA, PROCESSED
+from processing.utils.manifest import write_manifest, git_info, now
 
 POOL_TARGET = 117_049      # gezmu-only's pooled size after decontamination
 MAX_LEN = 150              # keep in sync with model/data/prepare.py
@@ -60,22 +61,28 @@ SOURCE_LID_CUTOFF = TARGET_LID_CUTOFF = 0.90
 
 def build(name: str, sources: list[str]) -> None:
     frames = []
+    source_tiers = {}
+    source_counts = {}
     for stem in sources:
         path = PROCESSED / f"{stem}.csv"
         if not path.exists():
             sys.exit(f"missing {path}")
-        tier = CURATED if stem in pool_mod.CURATED_SOURCES else MINED
+        curated = stem in pool_mod.CURATED_SOURCES
+        tier = CURATED if curated else MINED
         df = pool_mod.load_pairs(path, tier["cosine"], tier["africomet"],
                                  SOURCE_LID_CUTOFF, TARGET_LID_CUTOFF)
         if df is None:
             print(f"[{name}] skipping {path.name} (not am/en parallel text)")
             continue
         print(f"[{name}]   {stem}: {len(df):,} kept")
+        source_tiers[stem] = {"curated": curated, **tier}
+        source_counts[stem] = len(df)
         frames.append(df)
     if not frames:
         sys.exit("no usable sources")
 
-    pooled = pool_mod.decontaminate(pool_mod.pool(frames, seed=SEED))
+    pooled_full = pool_mod.pool(frames, seed=SEED)
+    pooled = pool_mod.decontaminate(pooled_full)
     if len(pooled) < POOL_TARGET:
         sys.exit(f"[{name}] only {len(pooled):,} pooled pairs, need {POOL_TARGET:,}")
     # pool() already deduped + seed-shuffled, so a head slice is a uniform draw.
@@ -87,13 +94,14 @@ def build(name: str, sources: list[str]) -> None:
     original = pool_mod.FINAL
     pool_mod.FINAL = final_out
     try:
-        pool_mod.split(pooled)
+        splits = pool_mod.split(pooled)
     finally:
         pool_mod.FINAL = original
 
     src_tok, tgt_tok = load_tokenizer("am"), load_tokenizer("en")
     out_dir = DATA / f"prepared_{name}" / "am-en"
     out_dir.mkdir(parents=True, exist_ok=True)
+    prepared_sizes = {}
     for sp in SPLITS:
         df = pd.read_csv(final_out / f"{sp}.csv", usecols=["am", "en"], dtype=str).dropna()
         s = [[BOS_ID, *e.ids, EOS_ID] for e in src_tok.encode_batch(df["am"].tolist())]
@@ -102,7 +110,26 @@ def build(name: str, sources: list[str]) -> None:
         with open(out_dir / f"{sp}.pkl", "wb") as f:
             pickle.dump({"src": [s[i] for i in keep], "tgt": [t[i] for i in keep]}, f)
         print(f"[{name}] {sp}: kept {len(keep):,} of {len(df):,}")
+        prepared_sizes[sp] = len(keep)
     print(f"[{name}] wrote caches to {out_dir}")
+
+    manifest = {
+        "arm": name,
+        "experiment": "fixed_size_corpus",
+        "built_at": now(),
+        "git": git_info(),
+        "sources": sources,
+        "source_tiers": source_tiers,  # per-source {curated, cosine, africomet} actually applied
+        "source_survivor_counts": source_counts,
+        "lid_cutoffs": {"source_lid": SOURCE_LID_CUTOFF, "target_lid": TARGET_LID_CUTOFF},
+        "pool_target": POOL_TARGET,
+        "pooled_after_dedup": len(pooled_full),
+        "pooled_after_decontam_and_subsample": len(pooled),
+        "split_sizes": {k: len(v) for k, v in splits.items()},
+        "prepared_sizes": prepared_sizes,
+    }
+    write_manifest(final_out, manifest)
+    write_manifest(out_dir, manifest)
 
 
 if __name__ == "__main__":

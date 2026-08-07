@@ -47,7 +47,7 @@ def corpus_scores(hyps: list[str], refs: list[str]) -> dict[str, float]:
 
 
 def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.device,
-                    beam_size: int | None = None) -> float:
+                    beam_size: int | None = None, return_all: bool = False):
     """Corpus BLEU over an already-built DataLoader. Shared by evaluate_split
     (a full data split, e.g. for a standalone post-training run) and
     model.train's periodic in-training eval (a small fixed subset, since decode
@@ -60,6 +60,10 @@ def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.dev
     would otherwise quadruple every periodic eval — turning a 250k-step run into
     mostly eval. Checkpoint selection therefore compares greedy scores against
     greedy scores, which is the comparison that matters for picking best.pt.
+
+    Returns BLEU alone by default (what every existing caller wants); pass
+    `return_all=True` for the full {"bleu", "chrf++"} dict plus sentence count,
+    e.g. model.rescore_indist reporting both metrics like model.rescore does.
     """
     hyps: list[str] = []
     refs: list[str] = []
@@ -72,14 +76,18 @@ def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.dev
         full_tgt = torch.cat([batch.tgt_in[:, :1], batch.tgt_out], dim=1)  # reconstruct [BOS, ..., EOS]
         refs.extend(tgt_tokenizer.decode(ids, skip_special_tokens=True) for ids in full_tgt.tolist())
 
-    return corpus_scores(hyps, refs)["bleu"]
+    scores = corpus_scores(hyps, refs)
+    if return_all:
+        return {**scores, "n_sentences": len(refs)}
+    return scores["bleu"]
 
 
 def evaluate_split(model, split: str, cfg: Config, device: torch.device,
-                   beam_size: int | None = None) -> float:
+                   beam_size: int | None = None, return_all: bool = False):
     tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
     loader = make_dataloader(split, cfg, shuffle=False)
-    return evaluate_loader(model, loader, tgt_tokenizer, cfg, device, beam_size=beam_size)
+    return evaluate_loader(model, loader, tgt_tokenizer, cfg, device, beam_size=beam_size,
+                            return_all=return_all)
 
 
 def main() -> None:

@@ -34,6 +34,11 @@ model:
 data:
   src_lang: am
   tgt_lang: en
+  # Explicit since the historical incident this project already hit once: this
+  # arm's data was originally read by physically swapping data/prepared_mixed/
+  # into place as data/prepared/am-en/, which silently breaks the moment
+  # something else occupies that slot (see model/data/dataset.py's docstring).
+  prepared_dir: data/prepared_mixed
   max_src_len: 150
   max_tgt_len: 150
   batch_size: 48

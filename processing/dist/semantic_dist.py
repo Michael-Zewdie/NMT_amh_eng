@@ -1,16 +1,25 @@
 """
 semantic_dist.py — bar chart of the corpus's semantic-cluster distribution.
 
-Pools every am/en CSV in data/processed/ (same source data length_dist.py
-reports on) and computes the same per-am mean-pooled English-side cluster
-assignment processing.utils.pool.split_semantic uses
+Reads data/final/{train,validation,test}.csv (the actual post-cutoff,
+post-decontamination training pool — their union is exactly the same set
+processing.utils.pool.split_semantic() clustered) and computes the same per-am
+mean-pooled English-side cluster assignment it used
 (processing.utils.pool.am_cluster_ids, over processing.dist.semantics'
 N_CLUSTERS/cluster_ids), then writes a bar chart of the per-cluster distinct-am
 counts.
 
-Only meaningful when STRATIFY_SEMANTIC is on — process.py chains this after
-pool only in that case. Running it standalone requires the score_embed cache to
-already be populated: python -m processing.utils.score_embed first.
+Deliberately *not* data/processed/ (the full pre-cutoff pool, ~4x bigger at
+last count: 2.8M rows vs. ~659k in data/final) — this file exists to report on
+what's actually in the training data, not the raw material before quality
+filtering, and reading the smaller, already-final set also means this call
+shares am_cluster_ids()'s on-disk cache with whatever pool.split_semantic()
+already computed for the same data, instead of tripling the work with a
+different (larger) am set that can't hit that cache.
+
+Only meaningful when STRATIFY_SEMANTIC is on. Running it standalone requires
+the score_embed cache to already be populated: python -m
+processing.utils.score_embed first.
 
 Also dumps N_SAMPLES random English sentences per cluster — a chart tells you
 the clusters are balanced, not what they *mean*; the sample CSV lets you
@@ -28,18 +37,12 @@ matplotlib.use("Agg")            # headless: write PNGs without a display
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from processing.utils.paths import PROCESSED, FIGS
+from processing.utils.paths import FINAL, FIGS
 from processing.utils.pool import am_cluster_ids
 from processing.dist.semantics import N_CLUSTERS
 
 _BAR_COLOR = "#4C6FE1"
 N_SAMPLES = 8   # sentences shown per cluster, both in the CSV and on stdout
-
-
-def load_am_en(path) -> pd.DataFrame | None:
-    """Read one CSV's am/en columns, or None if it isn't am/en parallel text."""
-    df = pd.read_csv(path, dtype=str)
-    return df[["am", "en"]] if {"am", "en"}.issubset(df.columns) else None
 
 
 def bar(counts: dict, path) -> None:
@@ -69,21 +72,24 @@ def sample_sentences(df: pd.DataFrame, clusters: dict, n: int = N_SAMPLES,
     """
     reps = df.drop_duplicates(subset=["am"]).copy()
     reps["cluster"] = reps["am"].map(clusters)
-    return (reps.groupby("cluster", group_keys=False)
-                .apply(lambda g: g.sample(n=min(n, len(g)), random_state=seed))
-                .sort_values("cluster")[["cluster", "am", "en"]]
-                .reset_index(drop=True))
+    # Explicit loop rather than groupby(...).apply(...): pandas' apply silently
+    # drops the grouping column from the reassembled frame in some versions when
+    # group_keys=False and the function returns a same-shaped slice of the group.
+    picked = [grp.sample(n=min(n, len(grp)), random_state=seed)
+              for _, grp in reps.groupby("cluster")]
+    return (pd.concat(picked, ignore_index=True)[["cluster", "am", "en"]]
+              .sort_values("cluster")
+              .reset_index(drop=True))
 
 
 def main() -> None:
-    frames = []
-    for path in sorted(PROCESSED.glob("*.csv")):
-        df = load_am_en(path)
-        if df is not None:
-            frames.append(df)
-    # Cross-source dedup on the pair, same as pool.py's own pool() — duplicate
-    # rows shouldn't inflate a single am group's weight in the cluster fit.
-    pooled = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["am", "en"])
+    # train/validation/test are already disjoint on am and each internally
+    # deduped (pool.py's own pool() did that before the split), so concatenating
+    # them just reconstructs the exact set split_semantic() clustered — same
+    # am_cluster_ids() cache key, no re-dedup needed.
+    frames = [pd.read_csv(FINAL / f"{name}.csv", dtype=str, usecols=["am", "en"])
+              for name in ("train", "validation", "test")]
+    pooled = pd.concat(frames, ignore_index=True)
 
     clusters = am_cluster_ids(pooled)  # {am: cluster_id}
     label_counts = Counter(clusters.values())

@@ -1,0 +1,11 @@
+run,split,decode,beam_size,bleu,chrf++,n_sentences,prepared_dir,checkpoint,scored_at
+am-en-base-v4,validation,greedy,1,26.39,48.04,50720,data/prepared_v4_32k,/home/michael/NMT_amh_eng/runs/am-en-base-v4/checkpoints/best.pt,2026-08-06T09:23:12
+am-en-base-v5,validation,greedy,1,22.17,44.04,51236,data/prepared,/home/michael/NMT_amh_eng/runs/am-en-base-v5/checkpoints/best.pt,2026-08-06T09:34:39
+am-en-base-v6,validation,greedy,1,24.72,46.67,51236,data/prepared,/home/michael/NMT_amh_eng/runs/am-en-base-v6/checkpoints/best.pt,2026-08-06T09:45:52
+am-en-broad,validation,greedy,1,4.30,22.46,5230,data/prepared_broad,/home/michael/NMT_amh_eng/runs/am-en-broad/checkpoints/best.pt,2026-08-06T09:47:07
+am-en-gezmu-only,validation,greedy,1,20.30,40.03,11687,data/prepared_gezmu,/home/michael/NMT_amh_eng/runs/am-en-gezmu-only/checkpoints/best.pt,2026-08-06T09:50:45
+am-en-mixed-93k,validation,greedy,1,14.68,36.78,11724,data/prepared_mixed,/home/michael/NMT_amh_eng/runs/am-en-mixed-93k/checkpoints/best.pt,2026-08-06T09:53:19
+am-en-narrow,validation,greedy,1,25.13,45.75,5247,data/prepared_narrow,/home/michael/NMT_amh_eng/runs/am-en-narrow/checkpoints/best.pt,2026-08-06T09:55:28
+am-en-nllb-146k,validation,greedy,1,23.45,45.97,14702,data/prepared_nllb146,/home/michael/NMT_amh_eng/runs/am-en-nllb-146k/checkpoints/best.pt,2026-08-06T09:57:20
+am-en-nllb-93k,validation,greedy,1,17.99,40.13,11704,data/prepared_nllb,/home/michael/NMT_amh_eng/runs/am-en-nllb-93k/checkpoints/best.pt,2026-08-06T09:59:05
+am-en-religious,validation,greedy,1,17.72,39.95,14648,data/prepared_religious,/home/michael/NMT_amh_eng/runs/am-en-religious/checkpoints/best.pt,2026-08-06T10:04:47

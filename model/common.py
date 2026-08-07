@@ -22,6 +22,7 @@ from processing.utils.paths import RUNS, TOKENIZER_AM, TOKENIZER_EN
 PAD_ID, UNK_ID, BOS_ID, EOS_ID = 0, 1, 2, 3
 
 _TOKENIZER_PATHS = {"am": TOKENIZER_AM, "en": TOKENIZER_EN}
+_CONFIG_DIRS = [Path("model/configs"), Path("model/configs/archive")]
 
 
 def load_tokenizer(lang: str, tokenizer_dir: str | Path | None = None) -> Tokenizer:
@@ -97,3 +98,43 @@ def describe_decoding(cfg: Config) -> str:
     """One-line summary of what cfg.inference asks for, for eval banners."""
     k = cfg.inference.beam_size
     return "greedy" if k <= 1 else f"beam {k}, length penalty {cfg.inference.length_penalty}"
+
+
+def find_config(run_name: str) -> Path | None:
+    """The config in model/configs (or its archive/) whose run_name matches."""
+    for d in _CONFIG_DIRS:
+        for p in sorted(d.glob("*.yaml")):
+            try:
+                if load_config(p).get("run_name") == run_name:
+                    return p
+            except Exception:
+                continue
+    return None
+
+
+def discover_runs() -> list[tuple[str, Path, Path]]:
+    """(run_name, config_path, checkpoint_path) for every runs/ dir with a
+    matching config. Prefers checkpoints/best.pt, falling back to last.pt for
+    runs that predate best.pt tracking (added at v4) — early runs (base,
+    baseline, v2, v3, the small* track) only ever saved last.pt.
+
+    Shared by model.rescore (out-of-distribution) and model.rescore_indist
+    (in-distribution), so "which run/checkpoint counts as this project's
+    current record" can't drift between the two.
+    """
+    out = []
+    for run_dir in sorted(RUNS.glob("*/")):
+        if not run_dir.is_dir():
+            continue
+        ckpt_dir = run_dir / "checkpoints"
+        ckpt = ckpt_dir / "best.pt"
+        if not ckpt.exists():
+            ckpt = ckpt_dir / "last.pt"
+        if not ckpt.exists():
+            continue
+        cfg_path = find_config(run_dir.name)
+        if cfg_path is None:
+            print(f"[skip] {run_dir.name}: no config with that run_name")
+            continue
+        out.append((run_dir.name, cfg_path, ckpt))
+    return out

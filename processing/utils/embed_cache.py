@@ -25,9 +25,24 @@ def _paths(name: str):
     return SCORES / f"{name}_embed.npy", SCORES / f"{name}_embed_keys.parquet"
 
 
+# In-process memo: {name: (vecs, keys)}. A full np.load() of an 8+GB cache is a
+# one-time, fast *sequential* read — the problem was never that load by itself,
+# it was paying for it twice in one process (once from pool.split_semantic, once
+# from semantic_dist), which pushed a real run to 61/62GB RAM and got it
+# OOM-killed. An earlier fix tried np.load(mmap_mode="r") instead, trading that
+# for scattered random-access page faults across the whole file for lookup()'s
+# ~659k/2.76M-row subset — which timed out instead of OOMing. Load once, keep it
+# resident for the rest of the process, same as every score_cache.py consumer
+# implicitly relies on the OS/pandas not re-reading a CSV it already has open.
+_CACHE: dict[str, tuple[np.ndarray, pd.Index]] = {}
+
+
 def _load(name: str, dim: int) -> tuple[np.ndarray, pd.Index]:
     """The cache as (vectors, key index); empty (but correctly shaped) if absent
-    or the vector/key counts disagree (a corrupted or half-written cache)."""
+    or the vector/key counts disagree (a corrupted or half-written cache).
+    Memoized per name for the lifetime of the process — see _CACHE above."""
+    if name in _CACHE:
+        return _CACHE[name]
     npy_path, keys_path = _paths(name)
     empty = (np.empty((0, dim), dtype=np.float32), pd.Index([], name="key"))
     if not npy_path.exists() or not keys_path.exists():
@@ -37,6 +52,7 @@ def _load(name: str, dim: int) -> tuple[np.ndarray, pd.Index]:
     if len(vecs) != len(keys) or vecs.shape[1] != dim:
         print(f"[embed_cache] {name}: cache shape mismatch — ignoring it and re-embedding")
         return empty
+    _CACHE[name] = (vecs, keys)
     return vecs, keys
 
 
@@ -53,10 +69,9 @@ def embedded(df: pd.DataFrame, name: str, key_cols: tuple[str, ...], compute,
     """
     keys = row_keys(df, key_cols)
     cache_vecs, cache_keys = _load(name, dim)
-    cache_pos = {k: i for i, k in enumerate(cache_keys)}
 
     distinct = keys.drop_duplicates()
-    miss_keys = distinct[~distinct.isin(cache_keys)]
+    miss_keys = distinct[cache_keys.get_indexer(distinct) == -1]
     print(f"[embed_cache] {name}: {len(distinct) - len(miss_keys)}/{len(distinct)} distinct "
           f"key(s) hit cache, {len(miss_keys)} to embed")
 
@@ -67,16 +82,16 @@ def embedded(df: pd.DataFrame, name: str, key_cols: tuple[str, ...], compute,
         fresh = np.asarray(compute(miss_rows[text_col].tolist()), dtype=np.float32)
         cache_vecs = np.concatenate([cache_vecs, fresh], axis=0)
         cache_keys = cache_keys.append(pd.Index(miss_keys.to_numpy(), name="key"))
-        base = len(cache_vecs) - len(miss_keys)
-        for i, k in enumerate(miss_keys.to_numpy()):
-            cache_pos[k] = base + i
         SCORES.mkdir(parents=True, exist_ok=True)
         npy_path, keys_path = _paths(name)
         np.save(npy_path, cache_vecs)
         pd.DataFrame({"key": cache_keys}).to_parquet(keys_path)
+        _CACHE[name] = (cache_vecs, cache_keys)  # keep the memo in sync with what's now on disk
         print(f"[embed_cache] {name}: +{len(miss_keys)} embedded → {npy_path} ({len(cache_keys)} total)")
 
-    idx = keys.map(cache_pos).to_numpy()
+    # Vectorized index lookup (pandas Index.get_indexer, hash-based C implementation)
+    # rather than a Python dict, which at millions of entries was real overhead too.
+    idx = cache_keys.get_indexer(keys)
     return cache_vecs[idx]
 
 
@@ -87,13 +102,18 @@ def lookup(df: pd.DataFrame, name: str, key_cols: tuple[str, ...], dim: int = 76
     split time, which must stay model-free and fast (see pool.py's split_semantic
     docstring). Run `python -m processing.utils.score_embed` first to populate
     the cache.
+
+    The underlying cache load is memoized per process (see _CACHE), so calling
+    this more than once in the same run — e.g. once from pool.split_semantic,
+    once from processing.dist.semantic_dist — only pays the disk-read cost once.
     """
     keys = row_keys(df, key_cols)
     cache_vecs, cache_keys = _load(name, dim)
-    cache_pos = {k: i for i, k in enumerate(cache_keys)}
 
-    missing = keys[~keys.isin(cache_keys)]
-    if len(missing):
+    idx = cache_keys.get_indexer(keys)
+    missing_mask = idx == -1
+    if missing_mask.any():
+        missing = keys[missing_mask]
         raise RuntimeError(
             f"[embed_cache] {name}: {len(missing)} row(s) ({missing.nunique()} distinct "
             f"text(s)) have no cached embedding. Run "
@@ -101,7 +121,6 @@ def lookup(df: pd.DataFrame, name: str, key_cols: tuple[str, ...], dim: int = 76
             f"processing/process.py) before stratifying by semantic cluster."
         )
 
-    idx = keys.map(cache_pos).to_numpy()
     return cache_vecs[idx]
 
 

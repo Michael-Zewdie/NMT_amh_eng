@@ -48,6 +48,7 @@ from model.common import BOS_ID, EOS_ID, load_tokenizer
 from processing.clean.filters import clean
 from processing.utils import pool as pool_mod
 from processing.utils.paths import DATA, PROCESSED, RAW
+from processing.utils.manifest import write_manifest, git_info, now
 
 BIBLE_URL = "https://object.pouta.csc.fi/OPUS-bible-uedin/v1/moses/am-en.txt.zip"
 BIBLE_DIR = RAW / "bible_uedin"
@@ -74,9 +75,10 @@ def fetch_bible() -> pd.DataFrame:
     })
 
 
-def build(name: str, df: pd.DataFrame, n: int) -> int:
-    """Pool -> decontaminate -> subsample to n -> split -> tokenize."""
-    pooled = pool_mod.decontaminate(pool_mod.pool([df], seed=SEED))
+def build(name: str, df: pd.DataFrame, n: int, source: str, africomet_cutoff: float) -> int:
+    """Pool -> decontaminate -> subsample to n -> split -> tokenize -> manifest."""
+    pooled_full = pool_mod.pool([df], seed=SEED)
+    pooled = pool_mod.decontaminate(pooled_full)
     if len(pooled) < n:
         sys.exit(f"[{name}] only {len(pooled):,} pairs, need {n:,}")
     pooled = pooled.head(n).reset_index(drop=True)
@@ -86,7 +88,7 @@ def build(name: str, df: pd.DataFrame, n: int) -> int:
     final_out.mkdir(parents=True, exist_ok=True)
     original, pool_mod.FINAL = pool_mod.FINAL, final_out
     try:
-        pool_mod.split(pooled)
+        splits = pool_mod.split(pooled)
     finally:
         pool_mod.FINAL = original
 
@@ -94,6 +96,7 @@ def build(name: str, df: pd.DataFrame, n: int) -> int:
     out_dir = DATA / f"prepared_{name}" / "am-en"
     out_dir.mkdir(parents=True, exist_ok=True)
     n_train = 0
+    prepared_sizes = {}
     for sp in SPLITS:
         d = pd.read_csv(final_out / f"{sp}.csv", usecols=["am", "en"], dtype=str).dropna()
         s = [[BOS_ID, *e.ids, EOS_ID] for e in src_tok.encode_batch(d.am.tolist())]
@@ -102,8 +105,32 @@ def build(name: str, df: pd.DataFrame, n: int) -> int:
         with open(out_dir / f"{sp}.pkl", "wb") as f:
             pickle.dump({"src": [s[i] for i in keep], "tgt": [t[i] for i in keep]}, f)
         print(f"[{name}] {sp}: kept {len(keep):,} of {len(d):,}")
+        prepared_sizes[sp] = len(keep)
         if sp == "train":
             n_train = len(keep)
+
+    manifest = {
+        "arm": name,
+        "experiment": "domain_breadth",
+        "built_at": now(),
+        "git": git_info(),
+        "source": source,
+        # Deliberately a SHARED numeric threshold across both arms (see main()'s
+        # docstring comment) rather than this repo's usual tiered curated/mined
+        # cutoffs — controlled-experiment symmetry, not a tuned optimum for `source`.
+        "cutoffs": {"africomet_score": africomet_cutoff, "source_lid": 0.90,
+                    "target_lid": 0.90, "labse_score": None},
+        "labse_note": "disabled for both arms — nllb carries no labse_score once it has laser_score",
+        "laser_note": "n/a for non-mined sources; nllb was pre-filtered laser_score>1.06 at collection (collection/collect.py LASER_CUTOFF)" if source != "nllb" else "pre-filtered laser_score>1.06 at collection (collection/collect.py LASER_CUTOFF), upstream of this script",
+        "min_pairs_floor": MIN_PAIRS,
+        "matched_corpus_size": n,
+        "pooled_after_dedup": len(pooled_full),
+        "pooled_after_decontam_and_subsample": len(pooled),
+        "split_sizes": {k: len(v) for k, v in splits.items()},
+        "prepared_sizes": prepared_sizes,
+    }
+    write_manifest(final_out, manifest)
+    write_manifest(out_dir, manifest)  # copy travels with data/prepared_<name>/ too
     return n_train
 
 
@@ -150,9 +177,9 @@ def main() -> None:
     print(f"\n=== shared cutoff africomet>{chosen}, LID>0.90, labse disabled ===")
     print(f"=== matched corpus size: {n:,} pooled pairs per arm ===\n")
 
-    a = build("narrow", bible, n)
+    a = build("narrow", bible, n, source="bible-uedin", africomet_cutoff=chosen)
     print()
-    b = build("broad", nllb, n)
+    b = build("broad", nllb, n, source="nllb", africomet_cutoff=chosen)
     print(f"\n=== train pairs — narrow {a:,} | broad {b:,} ===")
 
 

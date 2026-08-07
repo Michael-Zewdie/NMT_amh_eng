@@ -7,23 +7,38 @@
 # Two arms, identical in every respect except the domain breadth of the training
 # text. Built by experiments/domain_breadth.py.
 #
-#   narrow  bible-uedin (OPUS)  47,756 train  one book, one register
-#   broad   NLLB mined bitext   47,761 train  ~1,300 effective web domains
+#   narrow  bible-uedin (OPUS)  41,832 train  one book, one register
+#   broad   NLLB mined bitext   41,850 train  ~1,300 effective web domains
+#
+# CORRECTED 2026-08-06: this comment previously said 47,756/47,761 train — the
+# counts from a first attempt (runs/breadth.log, swapped in ~18:33) that got
+# superseded ~25 min later by the rerun actually reflected in runs/overnight.log
+# (started ~18:58) and in the checkpoints' mtimes. 47,756/47,761 never trained
+# anything; the numbers above are what runs/am-en-narrow, runs/am-en-broad
+# actually trained on. Full provenance (exact AfriCOMET/LID cutoffs, per-source
+# survivor counts) is now captured structurally — see
+# data/final_narrow/manifest.json / data/final_broad/manifest.json and
+# processing.utils.manifest — instead of only in these prose comments, which is
+# what let this drift in the first place.
 #
 # Pinned across both arms: corpus size (matched to within 5 pairs), tokenizers
 # (NOT retrained -> vocabulary fixed), architecture, LR, warmup (so peak LR is
 # identical at 6.99e-4), dropout, seed, step count, cleaning kernel, and the
 # 80/10/10 length-stratified am-grouped split.
 #
-# max_steps 29000 = ~29 epochs over 47.8k pairs at 48/step, matching the epoch
+# max_steps 29000 = ~29 epochs over ~41.8k pairs at 48/step, matching the epoch
 # count of am-en-base-v6 and am-en-gezmu-only so training length is not a variable.
 #
 # Each arm is scored on ITS OWN validation split (that is what "in-distribution"
 # means) and on the SAME fixed FLORES/MAFAND files.
 #
-# Known asymmetry, stated not hidden: NLLB rows have passed LASER+LID+AfriCOMET
-# filtering; bible-uedin gets only clean(). Both are high quality by construction
-# but not filtered identically. This varies domain breadth, not provenance quality.
+# Known asymmetry, stated not hidden: both arms DID get the same numeric
+# AfriCOMET (>0.5) and LID (>0.90) cutoffs — see experiments/domain_breadth.py's
+# shared-threshold search. What's NOT symmetric is LASER: nllb rows were already
+# laser_score>1.06-filtered at collection time (collection/collect.py
+# LASER_CUTOFF); bible-uedin was never mined, so it never goes through a LASER
+# step at all. Both are high quality by construction but not filtered
+# identically. This varies domain breadth, not provenance quality.
 #
 # Reads data/prepared_narrow/ — swapped into place as data/prepared/am-en.
 run_name: am-en-narrow
@@ -41,6 +56,11 @@ model:
 data:
   src_lang: am
   tgt_lang: en
+  # Explicit since the historical incident this project already hit once: this
+  # arm's data was originally read by physically swapping data/prepared_narrow/
+  # into place as data/prepared/am-en/, which silently breaks the moment
+  # something else occupies that slot (see model/data/dataset.py's docstring).
+  prepared_dir: data/prepared_narrow
   max_src_len: 150
   max_tgt_len: 150
   batch_size: 48

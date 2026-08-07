@@ -48,6 +48,7 @@ import polars as pl
 from model.common import BOS_ID, EOS_ID, load_tokenizer
 from processing.utils import pool as pool_mod
 from processing.utils.paths import DATA, PROCESSED
+from processing.utils.manifest import write_manifest, git_info, now
 
 CURATED_AFRICOMET = 0.15     # garbage floor, same as production's curated tier
 LID_CUTOFF = 0.90
@@ -56,7 +57,7 @@ SPLITS = ["validation", "test", "train"]
 SEED = 42
 
 
-def build(name: str, df: pd.DataFrame) -> int:
+def build(name: str, df: pd.DataFrame, source_note: str) -> int:
     pooled = pool_mod.decontaminate(pool_mod.pool([df], seed=SEED))
     print(f"[{name}] {len(pooled):,} pooled pairs after decontamination")
 
@@ -64,7 +65,7 @@ def build(name: str, df: pd.DataFrame) -> int:
     final_out.mkdir(parents=True, exist_ok=True)
     original, pool_mod.FINAL = pool_mod.FINAL, final_out
     try:
-        pool_mod.split(pooled)
+        splits = pool_mod.split(pooled)
     finally:
         pool_mod.FINAL = original
 
@@ -72,6 +73,7 @@ def build(name: str, df: pd.DataFrame) -> int:
     out_dir = DATA / f"prepared_{name}" / "am-en"
     out_dir.mkdir(parents=True, exist_ok=True)
     n_train = 0
+    prepared_sizes = {}
     for sp in SPLITS:
         d = pd.read_csv(final_out / f"{sp}.csv", usecols=["am", "en"], dtype=str).dropna()
         s = [[BOS_ID, *e.ids, EOS_ID] for e in src_tok.encode_batch(d.am.tolist())]
@@ -80,8 +82,26 @@ def build(name: str, df: pd.DataFrame) -> int:
         with open(out_dir / f"{sp}.pkl", "wb") as f:
             pickle.dump({"src": [s[i] for i in keep], "tgt": [t[i] for i in keep]}, f)
         print(f"[{name}] {sp}: kept {len(keep):,} of {len(d):,}")
+        prepared_sizes[sp] = len(keep)
         if sp == "train":
             n_train = len(keep)
+
+    manifest = {
+        "arm": name,
+        "experiment": "religious_vs_nllb",
+        "built_at": now(),
+        "git": git_info(),
+        "source": source_note,
+        # NOT a shared-threshold design (see module docstring): religious keeps
+        # everything above the curated floor, nllb146 takes its top-N by AfriCOMET.
+        "cutoffs": {"africomet_score": CURATED_AFRICOMET, "source_lid": LID_CUTOFF,
+                    "target_lid": LID_CUTOFF, "labse_score": None},
+        "pooled_after_decontam": len(pooled),
+        "split_sizes": {k: len(v) for k, v in splits.items()},
+        "prepared_sizes": prepared_sizes,
+    }
+    write_manifest(final_out, manifest)
+    write_manifest(out_dir, manifest)
     return n_train
 
 
@@ -122,9 +142,9 @@ def main() -> None:
     print(f"\n=== religious: {n:,} pairs at africomet>{CURATED_AFRICOMET}, LID>{LID_CUTOFF} ===")
     print(f"=== nllb146: matching that count with NLLB's {n:,} highest-AfriCOMET rows ===\n")
 
-    a = build("religious", rel)
+    a = build("religious", rel, source_note="religious.csv (verse-ID joined, all rows above curated floor)")
     print()
-    b = build("nllb146", best_nllb(n))
+    b = build("nllb146", best_nllb(n), source_note=f"nllb.csv (top {n:,} rows by AfriCOMET, LID>{LID_CUTOFF})")
     print(f"\n=== train pairs — religious {a:,} | nllb146 {b:,} ===")
 
 

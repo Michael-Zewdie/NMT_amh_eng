@@ -8,6 +8,7 @@ Superseded configs live in model/configs/archive/.
 """
 import sys
 import time
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -20,7 +21,8 @@ from model.data.dataset import TranslationDataset, collate_fn, make_dataloader
 from model.evaluate import evaluate_loader
 from model.optim import build_optimizer, build_scheduler
 from model.transformer import Seq2SeqTransformer
-from processing.utils.paths import RUNS
+from processing.utils.paths import RUNS, PREPARED
+from processing.utils.manifest import write_manifest, read_manifest, git_info, now
 
 DEFAULT_CONFIG = "model/configs/base_v6.yaml"
 
@@ -58,11 +60,39 @@ def run_eval(model, eval_loader, tgt_tokenizer, criterion, cfg, device, amp_dtyp
 
 
 def main() -> None:
+    main_start_time = time.time()
     config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG
     cfg = load_config(config_path)
     set_seed(cfg.training.seed)
     device = get_device()
     print(f"[train] device={device}  run_name={cfg.run_name}")
+
+    # Write runs/<name>/manifest.json now, before any training happens, so the
+    # exact config + data provenance is captured even if the run later crashes
+    # or gets killed. It's updated with final results at the end of main().
+    # See processing.utils.manifest for why this exists — reconstructing a past
+    # run's hyperparameters/data cutoffs from stdout logs alone doesn't scale.
+    run_dir = RUNS / cfg.run_name
+    # Same prepared_dir resolution as TranslationDataset (model/data/dataset.py) —
+    # an experiment arm with its own data.prepared_dir must get ITS manifest, not
+    # production's, or this ends up recording the wrong data provenance for the
+    # exact same reason prepared_dir itself exists (see that file's docstring).
+    prepared_root = Path(cfg.data.get("prepared_dir") or PREPARED)
+    data_manifest_path = prepared_root / f"{cfg.data.src_lang}-{cfg.data.tgt_lang}" / "manifest.json"
+    data_manifest = read_manifest(data_manifest_path)
+    if data_manifest is None:
+        print(f"[train] WARNING: no data manifest at {data_manifest_path} — "
+              f"this run's data provenance (thresholds/sources) won't be recorded")
+    write_manifest(run_dir, {
+        "run_name": cfg.run_name,
+        "config_path": config_path,
+        "config": dict(cfg),
+        "git": git_info(),
+        "started_at": now(),
+        "data_manifest_path": str(data_manifest_path),
+        "data_manifest": data_manifest,
+        "status": "running",
+    })
 
     src_tokenizer = load_tokenizer(cfg.data.src_lang)
     tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
@@ -86,7 +116,6 @@ def main() -> None:
         step = load_checkpoint(cfg.training.resume_from, model, optimizer, scheduler, map_location=device)
         print(f"[train] resumed from {cfg.training.resume_from} at step {step}")
 
-    run_dir = RUNS / cfg.run_name
     ckpt_dir = run_dir / "checkpoints"
     writer = SummaryWriter(log_dir=str(run_dir / "tensorboard"))
     amp_dtype = torch.bfloat16 if cfg.training.amp_dtype == "bf16" else torch.float16
@@ -154,6 +183,16 @@ def main() -> None:
     save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
     writer.close()
     print(f"[train] finished at step {step}")
+
+    manifest = read_manifest(run_dir / "manifest.json") or {}
+    manifest.update({
+        "status": "finished",
+        "finished_at": now(),
+        "final_step": step,
+        "best_val_bleu": best_bleu,
+        "wall_clock_seconds": round(time.time() - main_start_time, 1),
+    })
+    write_manifest(run_dir, manifest)
 
 
 if __name__ == "__main__":

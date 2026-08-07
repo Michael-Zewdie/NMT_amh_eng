@@ -31,9 +31,10 @@ Outputs:
 import numpy as np
 import pandas as pd
 
-from processing.utils.paths import PROCESSED, FINAL
+from processing.utils.paths import PROCESSED, FINAL, SCORES
 from processing.dist.lengths import BUCKETS, bucketize
 from processing.dist.semantics import N_CLUSTERS, cluster_ids
+from processing.utils.manifest import write_manifest, git_info, now
 
 SEED = 42
 
@@ -208,18 +209,6 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
     return splits
 
 
-def _mean_unit(vecs: np.ndarray) -> np.ndarray:
-    """Mean of a stack of unit vectors, L2-renormalized.
-
-    Plain averaging of unit vectors doesn't produce a unit vector (the mean of
-    two non-parallel unit vectors has norm < 1), and cluster_ids() requires
-    normalized input — see its docstring for why.
-    """
-    m = vecs.mean(axis=0)
-    norm = np.linalg.norm(m)
-    return m / norm if norm > 0 else m
-
-
 def am_cluster_ids(df: pd.DataFrame, k: int = N_CLUSTERS, seed: int = SEED,
                     embed_tag: str = "mpnet_en") -> dict[str, int]:
     """One semantic-cluster id per unique am, from k-means over mean-pooled English
@@ -234,23 +223,78 @@ def am_cluster_ids(df: pd.DataFrame, k: int = N_CLUSTERS, seed: int = SEED,
     to one vector before clustering, so every row sharing an am always gets the
     same cluster id.
 
-    Cache-only and model-free: raises via embed_cache.lookup() if
+    Vectorized, not a per-group Python loop: pd.factorize turns `am` into integer
+    codes, np.add.at accumulates every row's vector into its group's running sum
+    in one call, then the whole (n_groups, dim) mean matrix is L2-renormalized
+    in place. An earlier version used groupby("am").apply(...) — one Python call
+    per group — which at production scale (~400k+ unique am) was the actual
+    bottleneck in split_semantic(), not the k-means fit that follows it.
+
+    Every array here is (n_groups_or_rows, dim) — at the largest scale this runs
+    at (processing.dist.semantic_dist's ~2.8M-row unfiltered pool, ~2.6M unique
+    am), each one is several GB, so this was rewritten to reuse one buffer
+    in-place (sums -> means -> unit vectors) and drop the row-aligned lookup()
+    result the moment it's been accumulated, rather than the more readable but
+    much more memory-hungry version that kept sums/means/am_matrix as three
+    separate full-size arrays alive simultaneously — measured to blow well past
+    available RAM at that scale (a real run got killed here).
+
+    Cache-only and model-free otherwise: raises via embed_cache.lookup() if
     `python -m processing.utils.score_embed` hasn't been run yet for this data.
     Also used by processing.dist.semantic_dist for its distribution report, so
     both the split and the report agree on what a "cluster" is.
+
+    Result is cached to data/scores/semantic_clusters_<hash>.parquet, keyed by
+    the sorted set of am strings + k + seed + embed_tag — not just by embed_tag,
+    since a re-pool with different cutoffs changes *which* am's are being
+    clustered, and the k-means fit is sensitive to that set. A call on the exact
+    same am set (e.g. re-running semantic_dist without re-pooling, or re-pooling
+    twice with identical cutoffs) hits the cache and skips the embed lookup +
+    k-means fit entirely — both the mean-pooling and the fit were measured at
+    several minutes at production scale (~2.6M unique am), and the whole point
+    of separating scoring from pooling elsewhere in this pipeline is that a
+    repeat run shouldn't pay for it again.
     """
+    key = _cluster_cache_key(df["am"], k, seed, embed_tag)
+    cache_path = SCORES / f"semantic_clusters_{key}.parquet"
+    if cache_path.exists():
+        cached = pd.read_parquet(cache_path)
+        print(f"[pool] am_cluster_ids: cache hit ({cache_path.name}) — "
+              f"skipping embed lookup + k-means fit for {len(cached)} am groups")
+        return dict(zip(cached["am"], cached["cluster"]))
+
     from processing.utils.embed_cache import lookup
 
     en_vecs = lookup(df, embed_tag, key_cols=("en",))  # (len(df), dim), row-aligned to df
 
-    tmp = df[["am"]].copy()
-    tmp["_vec"] = list(en_vecs)
-    grouped = tmp.groupby("am")["_vec"].apply(lambda vs: _mean_unit(np.stack(vs)))
-    am_list = grouped.index.to_numpy()
-    am_matrix = np.stack(grouped.to_numpy())
+    codes, uniques = pd.factorize(df["am"].to_numpy())
+    n_groups, dim = len(uniques), en_vecs.shape[1]
+    sums = np.zeros((n_groups, dim), dtype=np.float32)  # embeddings are already float32; a handful of them summed doesn't need float64
+    np.add.at(sums, codes, en_vecs)
+    counts = np.bincount(codes, minlength=n_groups).reshape(-1, 1)
+    del en_vecs  # can be as large as the whole embedding cache; only needed for the accumulation above
+
+    sums /= counts  # in-place: sums now holds the per-group mean
+    norms = np.linalg.norm(sums, axis=1, keepdims=True)
+    np.divide(sums, np.where(norms > 0, norms, 1.0), out=sums)  # in-place L2-renormalize; leaves an (impossible in practice) zero group vector as-is
+    am_matrix = sums  # same buffer throughout — no separate means/am_matrix copies
 
     ids = cluster_ids(am_matrix, k=k, seed=seed)
-    return dict(zip(am_list, ids))
+
+    SCORES.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"am": uniques, "cluster": ids}).to_parquet(cache_path)
+    print(f"[pool] am_cluster_ids: cached {len(uniques)} am groups → {cache_path.name}")
+
+    return dict(zip(uniques, ids))
+
+
+def _cluster_cache_key(am: pd.Series, k: int, seed: int, embed_tag: str) -> str:
+    """Stable content hash for am_cluster_ids' cache: sha1 of every distinct am
+    string, sorted (so it's independent of row/encounter order), plus the
+    parameters that actually change the result."""
+    import hashlib
+    joined = "\x00".join(sorted(am.unique().tolist()))
+    return hashlib.sha1(f"{embed_tag}|{k}|{seed}|".encode("utf-8") + joined.encode("utf-8")).hexdigest()
 
 
 def _cut(n: int, ratios) -> tuple[int, int, int]:
@@ -330,7 +374,12 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          stratify_semantic: bool = False,
          n_clusters: int = N_CLUSTERS) -> None:
     """Filter every parallel-text CSV in data/processed/ by the quality cutoffs, pool
-    them, and split into data/final/.
+    them, and split into data/final/. Also writes data/final/manifest.json — every
+    cutoff actually used, per-source survivor counts, split sizes, and the git SHA —
+    so a run trained off this data can be traced back to exactly what built it
+    (model/data/prepare.py copies this manifest forward into data/prepared/<pair>/,
+    and model/train.py embeds it into runs/<name>/manifest.json). See
+    processing.utils.manifest for why this exists.
 
     curated_sources get curated_cosine_cutoff/curated_africomet_cutoff instead of the
     standard cutoffs — see the CURATED_SOURCES comment for why. LID cutoffs stay the
@@ -352,6 +401,7 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
           f"labse_score>{curated_cosine_cutoff}, africomet_score>{curated_africomet_cutoff}, "
           f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
     frames = []
+    source_counts = {}  # per-source survivor count, for the manifest below
     for p in processed_paths:
         curated = p.stem in curated_sources
         cos_c = curated_cosine_cutoff if curated else cosine_cutoff
@@ -361,16 +411,39 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
             print(f"[pool] skipping {p.name} (not am/en parallel text)")
         else:
             print(f"[pool]   {p.name}: {len(df)} pairs kept")
+            source_counts[p.stem] = len(df)
             frames.append(df)
 
     if not frames:
         raise ValueError(f"No am/en source CSVs found in {PROCESSED}.")
 
-    pooled = decontaminate(pool(frames, seed=seed))
+    pooled_all = pool(frames, seed=seed)
+    pooled = decontaminate(pooled_all)
     if stratify_semantic:
-        split_semantic(pooled, ratios=split_ratios, seed=seed, k=n_clusters)
+        splits = split_semantic(pooled, ratios=split_ratios, seed=seed, k=n_clusters)
     else:
-        split(pooled, ratios=split_ratios, seed=seed)
+        splits = split(pooled, ratios=split_ratios, seed=seed)
+
+    write_manifest(FINAL, {
+        "final_dir": str(FINAL),
+        "built_at": now(),
+        "git": git_info(),
+        "cutoffs": {
+            "mined": {"labse_score": cosine_cutoff, "africomet_score": africomet_cutoff,
+                      "source_lid": source_lid_cutoff, "target_lid": target_lid_cutoff},
+            "curated_sources": sorted(curated_sources),
+            "curated": {"labse_score": curated_cosine_cutoff, "africomet_score": curated_africomet_cutoff,
+                        "source_lid": source_lid_cutoff, "target_lid": target_lid_cutoff},
+        },
+        "split_ratios": list(split_ratios),
+        "seed": seed,
+        "stratify_semantic": stratify_semantic,
+        "n_clusters": n_clusters if stratify_semantic else None,
+        "source_survivor_counts": source_counts,
+        "pooled_after_dedup": len(pooled_all),
+        "pooled_after_decontam": len(pooled),
+        "split_sizes": {name: len(df) for name, df in splits.items()},
+    })
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ import pandas as pd
 from model.common import BOS_ID, EOS_ID, load_tokenizer
 from processing.utils import pool as pool_mod
 from processing.utils.paths import DATA, PROCESSED
+from processing.utils.manifest import write_manifest, git_info, now
 
 SOURCE = "gezmu"
 MAX_LEN = 150            # keep in sync with model/data/prepare.py
@@ -88,6 +89,7 @@ def tokenize_corpus() -> None:
     out_dir = PREPARED_OUT / "am-en"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    prepared_sizes = {}
     for split in SPLITS:
         df = pd.read_csv(FINAL_OUT / f"{split}.csv", usecols=["am", "en"], dtype=str).dropna()
         src = [[BOS_ID, *e.ids, EOS_ID] for e in src_tok.encode_batch(df["am"].tolist())]
@@ -98,7 +100,22 @@ def tokenize_corpus() -> None:
             pickle.dump(data, f)
         print(f"[gezmu-only] {split}: {len(df):,} pairs, dropped {len(df) - len(keep)} over "
               f"MAX_LEN={MAX_LEN}, kept {len(keep):,}")
+        prepared_sizes[split] = len(keep)
     print(f"[gezmu-only] wrote caches to {out_dir}")
+
+    manifest = {
+        "arm": "gezmu-only",
+        "experiment": "gezmu_only",
+        "built_at": now(),
+        "git": git_info(),
+        "source": SOURCE,
+        "cutoffs": {"labse_score": CURATED_COSINE_CUTOFF, "africomet_score": CURATED_AFRICOMET_CUTOFF,
+                    "source_lid": SOURCE_LID_CUTOFF, "target_lid": TARGET_LID_CUTOFF},
+        "cutoff_tier": "curated (same as production process.py curated tier)",
+        "prepared_sizes": prepared_sizes,
+    }
+    write_manifest(FINAL_OUT, manifest)
+    write_manifest(out_dir, manifest)
 
 
 if __name__ == "__main__":

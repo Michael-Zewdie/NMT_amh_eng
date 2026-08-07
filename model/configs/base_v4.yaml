@@ -23,6 +23,13 @@ data:
   # fails with a size mismatch against today's default 8k vocabulary.
   src_tokenizer: data/tokenizer/am_32k_v4
   tgt_tokenizer: data/tokenizer/en_32k_v4
+  # Own prepared cache (50,720 validation pairs, tokenized with the 32k vocab
+  # above) — was named data/prepared/am-en_32k_v4/ which doesn't fit the
+  # {prepared_dir}/{src}-{tgt} convention model/data/dataset.py expects, so it's
+  # now data/prepared_v4_32k/am-en/. Without this override, evaluating v4 would
+  # silently load today's default data/prepared/am-en — different pool AND
+  # 8k-tokenized ids fed to a 32k-vocab embedding table. No crash, just wrong.
+  prepared_dir: data/prepared_v4_32k
   max_src_len: 128
   max_tgt_len: 128
   batch_size: 128

@@ -15,6 +15,11 @@ model:
 data:
   src_lang: am
   tgt_lang: en
+  # Predates the 8k retrain (checkpoint embeddings are 32000 x 512) — without these
+  # keys the checkpoint fails (or worse, silently mismatches) against today's 8k
+  # default. See base_v4.yaml's identical comment for the incident that surfaced this.
+  src_tokenizer: data/tokenizer/am_32k_v4
+  tgt_tokenizer: data/tokenizer/en_32k_v4
   max_src_len: 128
   max_tgt_len: 128
   batch_size: 128

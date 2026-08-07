@@ -43,13 +43,12 @@ from pathlib import Path
 
 import torch
 
-from model.common import describe_decoding, load_for_inference
+from model.common import describe_decoding, discover_runs, load_for_inference
 from model.config import load_config
 from model.evaluate import corpus_scores
 from model.evaluate_benchmark import encode_sources, load_benchmark, translate
 from processing.utils.paths import BENCHMARKS, RUNS
 
-CONFIG_DIRS = [Path("model/configs"), Path("model/configs/archive")]
 RESULTS = Path("results")
 RESULTS_CSV = RESULTS / "benchmarks.csv"
 
@@ -60,32 +59,6 @@ FIELDS = ["run", "benchmark", "split", "decode", "beam_size", "length_penalty",
           "bleu", "chrf++", "n_sentences", "checkpoint", "scored_at"]
 
 
-def find_config(run_name: str) -> Path | None:
-    """The config whose run_name matches this run directory."""
-    for d in CONFIG_DIRS:
-        for p in sorted(d.glob("*.yaml")):
-            try:
-                if load_config(p).get("run_name") == run_name:
-                    return p
-            except Exception:
-                continue
-    return None
-
-
-def discover() -> list[tuple[str, Path, Path]]:
-    out = []
-    for run_dir in sorted(RUNS.glob("*/")):
-        ckpt = run_dir / "checkpoints" / "best.pt"
-        if not ckpt.exists():
-            continue
-        cfg_path = find_config(run_dir.name)
-        if cfg_path is None:
-            print(f"[skip] {run_dir.name}: no config with that run_name")
-            continue
-        out.append((run_dir.name, cfg_path, ckpt))
-    return out
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1].strip())
     ap.add_argument("--runs", help="comma-separated run names (default: all discovered)")
@@ -94,7 +67,7 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="list what would be scored, then exit")
     args = ap.parse_args()
 
-    jobs = discover()
+    jobs = discover_runs()
     if args.runs:
         want = set(args.runs.split(","))
         jobs = [j for j in jobs if j[0] in want]
