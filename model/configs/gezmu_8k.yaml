@@ -131,7 +131,9 @@ training:
   # written to runs/am-en-gezmu-8k/checkpoints/avg/step<N>.pt at save_every_steps
   # cadence, pruned to the newest 12 automatically.
   checkpoint_avg_n: 12
-  resume_from: null
+  # Paused by user request 2026-08-07 at step 85,000 (val_bleu 27.48), resumed
+  # same day — see memory/v2_experiments_archive.md for the full trajectory.
+  resume_from: runs/am-en-gezmu-8k/checkpoints/last.pt
 
 inference:
   # Paper: "Following Wu et al. (2016), we used a beam size of four and a length
