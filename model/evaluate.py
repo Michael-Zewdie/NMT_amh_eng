@@ -2,7 +2,7 @@
 model.evaluate — decode + sacrebleu corpus BLEU on a data split.
 
 Run (from the project root): python -m model.evaluate [config_path] [checkpoint_path] [split]
-Defaults: model/configs/base_v6.yaml, <run_dir>/checkpoints/last.pt, "validation".
+Defaults: model/configs/gezmu_8k.yaml, <run_dir>/checkpoints/last.pt, "validation".
 
 Decoding strategy comes from `inference.beam_size` in the config (see
 model.search): 1 is greedy, >1 is beam search with `inference.length_penalty`.
@@ -20,8 +20,7 @@ from model.config import Config
 from model.data.dataset import make_dataloader
 from model.search import decode
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale, see model/train.py's
-# DEFAULT_CONFIG comment — moved to archive/ in the 2026-08-07 v2 archive pass.
+DEFAULT_CONFIG = "model/configs/gezmu_8k.yaml"
 
 
 def corpus_scores(hyps: list[str], refs: list[str]) -> dict[str, float]:

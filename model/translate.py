@@ -5,7 +5,7 @@ decode dispatcher rather than a second decoding implementation, so the REPL
 uses whatever strategy the config's inference.beam_size asks for.
 
 Run (from the project root): python -m model.translate [config_path] [checkpoint_path]
-Defaults: model/configs/base_v6.yaml, <run_dir>/checkpoints/last.pt.
+Defaults: model/configs/gezmu_8k.yaml, <run_dir>/checkpoints/last.pt.
 """
 import sys
 
@@ -17,8 +17,7 @@ from model.config import Config
 from model.search import decode
 from processing.clean.normalize import normalize
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale, see model/train.py's
-# DEFAULT_CONFIG comment — moved to archive/ in the 2026-08-07 v2 archive pass.
+DEFAULT_CONFIG = "model/configs/gezmu_8k.yaml"
 
 
 def normalize_source(text: str) -> str:

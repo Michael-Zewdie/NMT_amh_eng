@@ -2,9 +2,9 @@
 model.train — training loop entrypoint.
 
 Run (from the project root): python -m model.train [config_path]
-config_path defaults to model/configs/base_v6.yaml (no argparse, matching the
+config_path defaults to model/configs/gezmu_8k.yaml (no argparse, matching the
 repo's existing plain-sys.argv precedent, e.g. collection/collect.py).
-Superseded configs live in model/configs/archive/.
+Superseded configs live in model/configs/archive/ and archive/model/configs/.
 """
 import sys
 import time
@@ -15,7 +15,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from model.common import PAD_ID, get_device, load_checkpoint, load_tokenizer, save_checkpoint, set_seed
+from model.common import (
+    PAD_ID, get_device, load_checkpoint, load_tokenizer, save_checkpoint,
+    save_checkpoint_weights_only, set_seed,
+)
 from model.config import Config, load_config
 from model.data.dataset import TranslationDataset, collate_fn, make_dataloader
 from model.evaluate import evaluate_loader
@@ -24,10 +27,24 @@ from model.transformer import Seq2SeqTransformer
 from processing.utils.paths import RUNS, PREPARED
 from processing.utils.manifest import write_manifest, read_manifest, git_info, now
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale since the 2026-08-07 v2
-# archive pass moved this file to archive/model/configs/base_v6.yaml — no
-# current default config exists until v2's first config is written; pass one
-# explicitly (sys.argv[1]) until this constant is repointed.
+DEFAULT_CONFIG = "model/configs/gezmu_8k.yaml"  # v2's first config — see its
+# header for what this run is and how it relates to archive/model/configs/base_v5.yaml.
+
+
+def save_rolling_checkpoint(ckpt_dir: Path, model, step: int, avg_n: int) -> None:
+    """Keep a rolling window of the last `avg_n` model-only snapshots in
+    ckpt_dir/avg/, named by step, for experiments.average_checkpoints to
+    average post-hoc (Gezmu et al. §4.2 decode from an average of the last
+    twelve). No-op when avg_n <= 0 — every existing config omits
+    training.checkpoint_avg_n and is unaffected.
+    """
+    if avg_n <= 0:
+        return
+    avg_dir = ckpt_dir / "avg"
+    save_checkpoint_weights_only(avg_dir / f"step{step}.pt", model, step)
+    kept = sorted(avg_dir.glob("step*.pt"), key=lambda p: int(p.stem.removeprefix("step")))
+    for stale in kept[:-avg_n]:
+        stale.unlink()
 
 
 def make_eval_subset_loader(cfg: Config) -> DataLoader:
@@ -120,6 +137,7 @@ def main() -> None:
         print(f"[train] resumed from {cfg.training.resume_from} at step {step}")
 
     ckpt_dir = run_dir / "checkpoints"
+    avg_n = cfg.training.get("checkpoint_avg_n", 0)
     writer = SummaryWriter(log_dir=str(run_dir / "tensorboard"))
     amp_dtype = torch.bfloat16 if cfg.training.amp_dtype == "bf16" else torch.float16
 
@@ -182,8 +200,10 @@ def main() -> None:
         if step % cfg.training.save_every_steps == 0:
             save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
             print(f"[train] checkpoint saved at step {step} -> {ckpt_dir / 'last.pt'}")
+            save_rolling_checkpoint(ckpt_dir, model, step, avg_n)
 
     save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
+    save_rolling_checkpoint(ckpt_dir, model, step, avg_n)
     writer.close()
     print(f"[train] finished at step {step}")
 

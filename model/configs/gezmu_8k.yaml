@@ -1,0 +1,142 @@
+# am-en-gezmu-8k — full reproduction of Gezmu, Nurnberger & Bati, "Extended
+# Parallel Corpus for Amharic-English Machine Translation" (arXiv:2104.03543v3,
+# LREC 2022), NMT-8K system, am->en direction (Table 3: 33.0 BLEU).
+#
+# Supersedes archive/model/configs/base_v5.yaml, which matched every
+# hyperparameter below but trained on the pooled ~409k-pair corpus instead of
+# Gezmu's own data — its own deviation #5 flagged that gap explicitly. This
+# run closes it: data/final/{train,validation,test}.csv is now built straight
+# from data/raw/local/Gezmu/ (their own released split) by
+# experiments/gezmu_nmt8k_repro.py, with NO filtering of any kind — no
+# AfriCOMET-QE, no LaBSE cosine, no LID, no length-ratio cutoff, no dedup.
+# See that script's docstring and data/final/manifest.json for exactly what
+# ran. This is v2's baseline: get close to 33.0, then iterate from here.
+#
+# ─── Paper §4.2, verbatim ──────────────────────────────────────────────────────
+#   "The hyperparameters include the Adam optimizer with varied learning rate over
+#    the course of training, dropout rate of 0.1, label smoothing of value 0.1,
+#    batch size of 1024, six Transformer blocks with eight heads, filter size of
+#    2048, and hidden size of 512. We used tensor2tensor library to implement the
+#    system."
+#   "We trained, thus, each NMT model for 250000 steps following Vaswani et al. (2017)."
+#   "For decoding, we used a single model obtained by averaging the last twelve
+#    checkpoints. Following Wu et al. (2016), we used a beam size of four and a
+#    length penalty of 0.6."
+#
+# Their result to beat: am->en 33.0 BLEU (NMT-8K, Table 3) on their own
+# 2,500-pair test set (data/final/test.csv here, byte-for-byte the same
+# 2,500 pairs) with 140,000 training pairs (139,938 here after MAX_LEN=150
+# and one degenerate row — see below).
+#
+# ─── Matched exactly ──────────────────────────────────────────────────────────
+#   Data: Gezmu et al.'s own train/dev/test split, completely unfiltered.
+#   d_model 512 · n_heads 8 · 6+6 blocks · d_ff 2048 · dropout 0.1 ·
+#   label_smoothing 0.1 · 250,000 steps · Adam(0.9, 0.98, eps=1e-9), plain (no
+#   weight decay — model/optim.py's AdamW at weight_decay=0.0 is mathematically
+#   identical to Adam) · inverse-sqrt "varied learning rate" · tied
+#   embedding/softmax (t2t's shared_embedding_and_softmax_weights default) ·
+#   8k subword vocabulary (their best am->en point, Table 3) · beam size 4,
+#   length penalty 0.6 (Wu et al. 2016) · decoding from an average of the last
+#   twelve checkpoints (training.checkpoint_avg_n below +
+#   experiments/average_checkpoints.py — run that AFTER training finishes,
+#   then decode from checkpoints/averaged.pt, not best.pt/last.pt).
+#
+# ─── Inferred, because the paper does not state it ────────────────────────────
+#   warmup_steps 4000 — the paper says only "varied learning rate ... following
+#   Vaswani et al. (2017)", and 4000 is Vaswani's value. Not a free knob:
+#   model/optim.py couples peak LR to warmup as d_model^-0.5 * warmup^-0.5, so
+#   4000 also fixes peak LR at 7.0e-4.
+#   checkpoint interval for the last-twelve average — the paper doesn't state
+#   theirs. save_every_steps=5000 means the last 12 span steps 195,000-250,000
+#   (the final 24% of training); tighten this (e.g. 2000) for a narrower window
+#   if the averaged checkpoint underperforms best.pt.
+#
+# ─── Known deviations — read before writing up any comparison ─────────────────
+#   1. batch_size: the paper says "1024", but in tensor2tensor batch_size counts
+#      SUBWORD TOKENS, not sentences. Measured over THIS corpus's
+#      data/prepared/am-en/train.pkl (139,938 pairs), mean target sequence is
+#      22.11 tokens (BOS/EOS included), so 46 sentences ≈ 1,017 target tokens —
+#      the closest integer to 1024. accum_steps stays 1 so the optimizer step
+#      IS the batch. At 46/step, 250k steps ≈ 82 epochs over this corpus —
+#      high, but this is a narrow ~140k-pair corpus (83% Watchtower+Bible per
+#      Table 1) and matches the paper's own recipe, not a mistake to fix.
+#   2. Different subword algorithm AND vocabulary sharing: they used
+#      tensor2tensor word-piece with a SHARED vocabulary across Amharic
+#      (transliterated to a Latin-based scheme specifically to share
+#      named-entity subwords with English — Gezmu et al. 2021b,
+#      github.com/andmek/AT4MT) and English. We use separate per-language
+#      tokenizers (English ByteLevel BPE, Amharic Unigram/SentencePiece, both
+#      8k, native Ethiopic script, no transliteration) — this repo's existing
+#      architecture assumes two vocabularies (model/common.py's
+#      _TOKENIZER_PATHS) and reworking that is out of scope for this run. If
+#      the result lands meaningfully short of 33.0, this is the top suspect.
+#   3. English/Amharic preprocessing: they tokenized English with Moses'
+#      tokenizer script and a modified version for Amharic, ahead of subword
+#      segmentation. Our text is untouched from the release (already
+#      lowercased/normalized by the authors, not further Moses-tokenized) —
+#      our subword tokenizers segment it directly.
+#   4. grad_clip_norm 1.0 and bf16 autocast are ours; the paper states neither.
+#   5. MAX_LEN=150 (model/data/prepare.py) drops 61/139,999 train pairs whose
+#      either side exceeds 150 tokens — a structural limit (positional table
+#      size), not a quality filter. The paper's stated 80-token/1:9-ratio
+#      length filter is explicitly scoped to the SMT baseline in the text
+#      (section 5.1) and Table 1's totals match Table 2's totals exactly
+#      (145,364 both ways), meaning no such filter was applied before the NMT
+#      split either — so this 150-token drop is the only length-based
+#      filtering in this pipeline, and it is far more permissive than theirs.
+#   6. One degenerate row dropped from train (empty Amharic source, English
+#      target "www.jw.org") — see experiments/gezmu_nmt8k_repro.py docstring.
+#
+# Fresh init required — nothing to resume from.
+run_name: am-en-gezmu-8k
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1              # paper: "dropout rate of 0.1"
+  max_len: 150              # >= prepare.py MAX_LEN; positional table size, not a paper value
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  # ≈1017 target tokens per optimizer step — the literal tensor2tensor reading
+  # of the paper's "batch size of 1024", measured on THIS corpus. See deviation 1.
+  batch_size: 46
+  num_workers: 8
+
+training:
+  warmup_steps: 4000        # inferred from Vaswani et al. (2017); also sets peak LR 7.0e-4
+  label_smoothing: 0.1      # paper: "label smoothing of value 0.1"
+  grad_clip_norm: 1.0
+  accum_steps: 1            # batch_size IS the batch; no accumulation
+  max_steps: 250000         # paper: "250000 steps"
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 5000
+  eval_every_steps: 5000
+  # Validation is only 2,862 pairs here (the paper's own dev set) — smaller
+  # than any eval_subset_size this repo has used before, so this number just
+  # means "the whole thing": min(3000, 2862) = 2862. No subset-overfitting
+  # risk (EXPERIMENTS.md finding #4) because there's no subsetting happening.
+  eval_subset_size: 3000
+  log_every_steps: 500
+  # Rolling window for experiments.average_checkpoints — paper decodes from an
+  # average of the last twelve. Snapshots are model-only (no optimizer/scheduler),
+  # written to runs/am-en-gezmu-8k/checkpoints/avg/step<N>.pt at save_every_steps
+  # cadence, pruned to the newest 12 automatically.
+  checkpoint_avg_n: 12
+  resume_from: null
+
+inference:
+  # Paper: "Following Wu et al. (2016), we used a beam size of four and a length
+  # penalty of 0.6." Live — see model/search.py. length_penalty is Wu et al.
+  # eq. 14's alpha: lp(Y) = ((5 + |Y|) / 6) ** alpha.
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6

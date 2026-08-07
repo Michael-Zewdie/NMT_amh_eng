@@ -36,8 +36,7 @@ from processing.utils.paths import BENCHMARKS, RUNS
 
 BEAMS = [1, 4, 6, 8]
 PENALTIES = [0.0, 0.4, 0.6, 1.0]
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"  # stale, see model/train.py's
-# DEFAULT_CONFIG comment — moved to archive/ in the 2026-08-07 v2 archive pass.
+DEFAULT_CONFIG = "model/configs/gezmu_8k.yaml"
 
 
 def score(model, cfg, tok_src, tok_tgt, df, device) -> dict:

@@ -73,6 +73,19 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=No
     return ckpt["step"]
 
 
+def save_checkpoint_weights_only(path, model, step: int) -> None:
+    """Model weights only, no optimizer/scheduler state — for the rolling
+    numbered snapshots model/train.py keeps when training.checkpoint_avg_n is
+    set (Gezmu et al. decode from an average of their last twelve checkpoints;
+    see experiments/average_checkpoints.py). Loadable via load_checkpoint like
+    any other checkpoint (optimizer/scheduler args just stay None), but at a
+    fraction of the size since Adam alone carries 2x the model's parameter
+    count in optimizer state.
+    """
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"model": model.state_dict(), "step": step}, path)
+
+
 def load_for_inference(config_path, checkpoint_path=None) -> tuple:
     """Config + eval-mode model + both tokenizers + device, ready to decode.
 
