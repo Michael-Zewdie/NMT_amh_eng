@@ -132,9 +132,10 @@ def main() -> None:
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID, label_smoothing=cfg.training.label_smoothing)
 
     step = 0
+    best_bleu = -1.0
     if cfg.training.resume_from:
-        step = load_checkpoint(cfg.training.resume_from, model, optimizer, scheduler, map_location=device)
-        print(f"[train] resumed from {cfg.training.resume_from} at step {step}")
+        step, best_bleu = load_checkpoint(cfg.training.resume_from, model, optimizer, scheduler, map_location=device)
+        print(f"[train] resumed from {cfg.training.resume_from} at step {step}, best_bleu={best_bleu:.2f}")
 
     ckpt_dir = run_dir / "checkpoints"
     avg_n = cfg.training.get("checkpoint_avg_n", 0)
@@ -143,7 +144,6 @@ def main() -> None:
 
     model.train()
     running_loss, running_count, running_tokens = 0.0, 0, 0
-    best_bleu = -1.0
     start_time = time.time()
     data_iter = iter(train_loader)
 
@@ -194,15 +194,15 @@ def main() -> None:
             writer.add_scalar("val/bleu", bleu, step)
             if bleu > best_bleu:
                 best_bleu = bleu
-                save_checkpoint(ckpt_dir / "best.pt", model, optimizer, scheduler, step)
+                save_checkpoint(ckpt_dir / "best.pt", model, optimizer, scheduler, step, best_bleu)
                 print(f"[train] new best val_bleu {bleu:.2f} at step {step} -> {ckpt_dir / 'best.pt'}")
 
         if step % cfg.training.save_every_steps == 0:
-            save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
+            save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step, best_bleu)
             print(f"[train] checkpoint saved at step {step} -> {ckpt_dir / 'last.pt'}")
             save_rolling_checkpoint(ckpt_dir, model, step, avg_n)
 
-    save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
+    save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step, best_bleu)
     save_rolling_checkpoint(ckpt_dir, model, step, avg_n)
     writer.close()
     print(f"[train] finished at step {step}")

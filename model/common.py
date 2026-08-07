@@ -50,27 +50,43 @@ def get_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def save_checkpoint(path, model, optimizer, scheduler, step: int) -> None:
+def save_checkpoint(path, model, optimizer, scheduler, step: int, best_bleu: float | None = None) -> None:
+    """best_bleu is optional (last.pt/best.pt both pass it; anything that
+    doesn't care can omit it) but should always be passed by model/train.py —
+    see load_checkpoint's docstring for why."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "scheduler": scheduler.state_dict(),
-            "step": step,
-        },
-        path,
-    )
+    ckpt = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "step": step,
+    }
+    if best_bleu is not None:
+        ckpt["best_bleu"] = best_bleu
+    torch.save(ckpt, path)
 
 
-def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=None) -> int:
+def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=None) -> tuple[int, float]:
+    """Returns (step, best_bleu). best_bleu defaults to -1.0 when the
+    checkpoint predates this field (e.g. the avg/ rolling snapshots, which are
+    model-only) or was never set.
+
+    This return value existing is the fix for a real bug: model/train.py used
+    to always reset best_bleu = -1.0 after a resume, regardless of what the
+    pre-interruption best actually was — so the FIRST eval after ANY resume
+    would overwrite best.pt even when it scored worse. Caught live on
+    am-en-gezmu-8k's first pause/resume (2026-08-07): step 90,000's 27.32
+    overwrote step 85,000's 27.48 as "new best". Recovered from
+    checkpoints/avg/step85000.pt (rolling snapshots are independent of this
+    bug) — see model/train.py's use of this return value for the actual fix.
+    """
     ckpt = torch.load(path, map_location=map_location, weights_only=True)
     model.load_state_dict(ckpt["model"])
     if optimizer is not None:
         optimizer.load_state_dict(ckpt["optimizer"])
     if scheduler is not None:
         scheduler.load_state_dict(ckpt["scheduler"])
-    return ckpt["step"]
+    return ckpt["step"], ckpt.get("best_bleu", -1.0)
 
 
 def save_checkpoint_weights_only(path, model, step: int) -> None:
