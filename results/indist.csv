@@ -9,3 +9,4 @@ am-en-narrow,validation,greedy,1,25.13,45.75,5247,data/prepared_narrow,/home/mic
 am-en-nllb-146k,validation,greedy,1,23.45,45.97,14702,data/prepared_nllb146,/home/michael/NMT_amh_eng/runs/am-en-nllb-146k/checkpoints/best.pt,2026-08-06T09:57:20
 am-en-nllb-93k,validation,greedy,1,17.99,40.13,11704,data/prepared_nllb,/home/michael/NMT_amh_eng/runs/am-en-nllb-93k/checkpoints/best.pt,2026-08-06T09:59:05
 am-en-religious,validation,greedy,1,17.72,39.95,14648,data/prepared_religious,/home/michael/NMT_amh_eng/runs/am-en-religious/checkpoints/best.pt,2026-08-06T10:04:47
+am-en-gezmu-8k,validation,greedy,1,28.70,45.71,2862,data/prepared,/home/michael/NMT_amh_eng/runs/am-en-gezmu-8k/checkpoints/best.pt,2026-08-07T15:23:16

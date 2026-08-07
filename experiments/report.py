@@ -39,10 +39,28 @@ def best_benchmark_rows(bench: pd.DataFrame) -> pd.DataFrame:
     return bench.drop_duplicates(subset=["run", "benchmark"], keep="first")
 
 
-def cutoffs_summary(manifest: dict) -> str:
+def _data_provenance(manifest: dict) -> dict | None:
+    """Backfilled runs (experiments/backfill_manifests.py) store an
+    already-summarized 'data_provenance' dict at the manifest's top level.
+    Live runs (model/train.py) instead carry the full pool/build manifest
+    under 'data_manifest' (whatever processing.utils.pool or a bespoke
+    data-build script like experiments/gezmu_nmt8k_repro.py wrote to
+    data/final/manifest.json) — different producers, different shapes, so
+    normalize both into the {"cutoffs"/"filtering", "train_pairs"/"counts"}
+    view this module reads, rather than silently returning "—" for every
+    run that was never backfilled."""
     dp = manifest.get("data_provenance")
+    if dp is not None:
+        return dp
+    return manifest.get("data_manifest") or None
+
+
+def cutoffs_summary(manifest: dict) -> str:
+    dp = _data_provenance(manifest)
     if dp is None:
         return "—"
+    if "filtering" in dp:  # e.g. experiments/gezmu_nmt8k_repro.py's "none — ..." string
+        return dp["filtering"]
     c = dp.get("cutoffs")
     if c is None:
         return "unrecoverable"
@@ -60,9 +78,12 @@ def cutoffs_summary(manifest: dict) -> str:
 
 
 def train_pairs_summary(manifest: dict) -> str:
-    dp = manifest.get("data_provenance")
+    dp = _data_provenance(manifest)
     if dp is None:
         return "—"
+    if "counts" in dp:  # experiments/gezmu_nmt8k_repro.py's {"train": {"before":, "after":}, ...}
+        n = dp["counts"].get("train", {}).get("after")
+        return f"{n:,}" if isinstance(n, int) else "unrecoverable"
     n = dp.get("train_pairs")
     return f"{n:,}" if isinstance(n, int) else "unrecoverable"
 

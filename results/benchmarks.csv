@@ -67,3 +67,7 @@ am-en-small-strict,flores200_am_en,devtest,greedy,1,,5.46,28.31,1012,/home/micha
 am-en-small-strict,flores200_am_en,devtest,beam4,4,1.0,6.00,28.79,1012,/home/michael/NMT_amh_eng/runs/am-en-small-strict/checkpoints/last.pt,2026-08-06T09:10:26
 am-en-small-strict,mafand_en_amh,test,greedy,1,,3.02,22.23,1037,/home/michael/NMT_amh_eng/runs/am-en-small-strict/checkpoints/last.pt,2026-08-06T09:10:28
 am-en-small-strict,mafand_en_amh,test,beam4,4,1.0,3.30,22.58,1037,/home/michael/NMT_amh_eng/runs/am-en-small-strict/checkpoints/last.pt,2026-08-06T09:10:33
+am-en-gezmu-8k,flores200_am_en,devtest,greedy,1,,3.76,26.03,1012,/home/michael/NMT_amh_eng/runs/am-en-gezmu-8k/checkpoints/best.pt,2026-08-07T15:23:43
+am-en-gezmu-8k,flores200_am_en,devtest,beam4,4,0.6,4.17,25.94,1012,/home/michael/NMT_amh_eng/runs/am-en-gezmu-8k/checkpoints/best.pt,2026-08-07T15:24:33
+am-en-gezmu-8k,mafand_en_amh,test,greedy,1,,1.93,22.02,1037,/home/michael/NMT_amh_eng/runs/am-en-gezmu-8k/checkpoints/best.pt,2026-08-07T15:24:43
+am-en-gezmu-8k,mafand_en_amh,test,beam4,4,0.6,2.39,21.82,1037,/home/michael/NMT_amh_eng/runs/am-en-gezmu-8k/checkpoints/best.pt,2026-08-07T15:25:26

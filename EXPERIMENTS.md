@@ -31,6 +31,86 @@ Notable: `am-en-small-moderate` — a much smaller model (256d vs 512d) — near
 
 ---
 
+## v2 (2026-08-07 onward)
+
+Everything above is **v1** — archived to `archive/` (see `archive/README.md`) to
+start a clean slate. v1's best-OOD-model title above still stands (nothing in
+v2 has tried to beat it yet); v2 starts from a different question: can this
+pipeline reproduce a published number at all, on the exact data and recipe
+that produced it? First v2 result is below. New runs going forward get added
+here, not into the v1 tables above.
+
+### am-en-gezmu-8k — full reproduction of Gezmu et al.'s NMT-8K system
+
+Full details in `model/configs/gezmu_8k.yaml`'s header (every matched
+hyperparameter, every deviation, cited against the paper text) and
+`experiments/gezmu_nmt8k_repro.py` (data provenance). Summary:
+
+**Data**: `data/raw/local/Gezmu/{train,dev,test}.am-en.base.{am,en}` — almost
+certainly the authors' own released split (exact counts 140,000/2,864/2,500
+match their Table 2; the paper's own appendix example sentence is verbatim
+the first line of their test set). Used with **zero filtering** — no
+AfriCOMET-QE, no LaBSE, no LID, no length-ratio cutoff, no dedup (one
+degenerate empty-source row dropped, see the repro script). This is the key
+difference from every v1 run that touched Gezmu data: `am-en-gezmu-only`
+(archived) still applied `AFRICOMET_CUTOFF=0.15` + `LID>0.90` to this same
+source.
+
+**Recipe**: every §4.2 hyperparameter matched — `d_model=512, n_heads=8, 6+6
+layers, d_ff=2048, dropout=0.1, label_smoothing=0.1`, Adam (weight_decay=0,
+equivalent to plain Adam), inverse-sqrt schedule (`warmup_steps=4000`,
+inferred from Vaswani et al. since the paper doesn't state it), 250,000
+steps, `batch_size=46` sentences (≈1,017 target tokens — the closest integer
+match to their token-counted "batch size of 1024," recomputed for this
+corpus's actual mean length), beam 4 / length penalty 0.6, decoding from an
+average of the last 12 checkpoints (new capability built this session —
+`experiments/average_checkpoints.py`).
+
+**Training**: paused twice mid-run — once by user request (step 85,000), once
+by an unexpected process death at step ~112,000 (harness/session boundary;
+`nohup`+`disown` alone didn't survive it in this environment — see
+`memory/v2_experiments_archive.md` for the full incident notes, including a
+real bug this surfaced and fixed: `best_bleu` wasn't being restored across
+resumes, commit `0b74e16`). Neither interruption lost meaningful progress —
+checkpoints every 5,000 steps bounded the loss to under 5 minutes each time.
+Completed all 250,000 steps.
+
+**Results** (test set = the paper's own 2,500-pair held-out split, directly
+comparable to their Table 3 number; FLORES/MAFAND are the usual OOD
+benchmarks, included for completeness though this run was never expected to
+compete there):
+
+| decode | checkpoint | test BLEU | FLORES devtest BLEU/chrF++ | MAFAND test BLEU/chrF++ |
+|---|---|---|---|---|
+| greedy | best.pt (step 250,000) | — | 3.76 / 26.03 | 1.93 / 22.02 |
+| beam 4 | best.pt (step 250,000) | — | 4.17 / 25.94 | 2.39 / 21.82 |
+| beam 4 | last.pt (step 250,000, unaveraged) | 30.75 | — | — |
+| **beam 4** | **averaged (last 12 ckpts, steps 195k–250k)** | **31.22** | 4.27 / 25.89 | 2.41 / 21.86 |
+| in-distribution (own validation, 2,862 pairs) | best.pt, greedy | 28.70 BLEU / 45.71 chrF++ | — | — |
+
+**Gezmu et al.'s NMT-8K (Table 3): 33.0 BLEU. This run: 31.22 BLEU — a 1.78
+BLEU gap.** Checkpoint averaging contributed +0.47 over the single final
+checkpoint (30.75 → 31.22), consistent with the paper's own rationale for
+using it. Given the documented deviations — separate per-language 8k
+tokenizers instead of their shared vocabulary over Amharic transliterated to
+a Latin-based scheme (specifically meant to share named-entity subwords with
+English), no Moses pretokenization, a different subword algorithm
+implementation, this repo's own PyTorch Transformer instead of tensor2tensor
+— 1.78 BLEU is a small gap, and a plausible one to attribute mostly to the
+vocabulary-sharing difference (the top suspect, since it's the most
+substantive architectural deviation and the paper's own reasoning for it is
+specifically about cross-lingual subword sharing, which this run has none
+of).
+
+FLORES/MAFAND numbers (4.27 / 2.41) are low, as expected: this run trains on
+a genuinely narrow, ~83%-religious-register corpus with zero filtering, and
+was never meant to generalize — it exists to answer one question (can this
+pipeline hit the published number on their exact data/recipe) and it does,
+closely. Not a candidate for "best OOD model" — v1's `am-en-base-v4` still
+holds that title going into v2's next experiments.
+
+---
+
 ## Run history
 
 ### am-en-base (pre-existing, before this log started)
