@@ -5,7 +5,7 @@ decode dispatcher rather than a second decoding implementation, so the REPL
 uses whatever strategy the config's inference.beam_size asks for.
 
 Run (from the project root): python -m model.translate [config_path] [checkpoint_path]
-Defaults: model/configs/base_v6.yaml, <run_dir>/checkpoints/last.pt.
+Defaults: model/configs/archive/base_v6.yaml, <run_dir>/checkpoints/last.pt.
 """
 import sys
 
@@ -13,11 +13,11 @@ import polars as pl
 import torch
 
 from model.common import BOS_ID, EOS_ID, load_for_inference
-from model.config import Config
-from model.search import decode
-from processing.clean.normalize import normalize
+from model.configs.config import Config
+from model.search.decode import decode
+from process.clean.normalize import normalize
 
-DEFAULT_CONFIG = "model/configs/base_v6.yaml"
+DEFAULT_CONFIG = "model/configs/archive/base_v6.yaml"
 
 
 def normalize_source(text: str) -> str:
@@ -26,7 +26,7 @@ def normalize_source(text: str) -> str:
     Non-optional: the model only ever saw normalized text, so skipping this
     measures a preprocessing mismatch rather than translation quality. Doing so
     costs ~1.8 BLEU on FLORES devtest (17.35 -> 15.57 for am-en-base-v6), which
-    is larger than the entire gain from beam search. model.evaluate_benchmark
+    is larger than the entire gain from beam search. model.evaluate.evaluate_OOD
     does this inside load_benchmark(); the REPL has to do it explicitly, since
     its input arrives as a bare line of stdin.
     """

@@ -4,20 +4,21 @@ device/seed setup, checkpoint save/load, and the "load a trained model" preamble
 that every inference entry point needs.
 
 Special-token ids match data/tokenizer/{en,am}/tokenizer.json exactly (see
-processing/train_tokenizer.py and processing/train_tokenizer_am.py) — import
-them from here rather than hardcoding. Neither tokenizer has a post_processor
-configured, so encode(...).ids does NOT include BOS/EOS; callers add them.
+model/tokenize/train_tokenizer.py and model/tokenize/train_tokenizer_am.py) —
+import them from here rather than hardcoding. Neither tokenizer has a
+post_processor configured, so encode(...).ids does NOT include BOS/EOS; callers add them.
 """
 import random
 from pathlib import Path
 
 import numpy as np
+import sacrebleu
 import torch
 from tokenizers import Tokenizer
 
-from model.config import Config, load_config
-from model.transformer import Seq2SeqTransformer
-from processing.utils.paths import RUNS, TOKENIZER_AM, TOKENIZER_EN
+from model.configs.config import Config, load_config
+from model.architecture.transformer import Seq2SeqTransformer
+from process.utils.paths import RUNS, TOKENIZER_AM, TOKENIZER_EN
 
 PAD_ID, UNK_ID, BOS_ID, EOS_ID = 0, 1, 2, 3
 
@@ -75,8 +76,8 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=No
 def load_for_inference(config_path, checkpoint_path=None) -> tuple:
     """Config + eval-mode model + both tokenizers + device, ready to decode.
 
-    Shared by model.evaluate, model.evaluate_benchmark and model.translate,
-    which otherwise repeat this preamble verbatim. checkpoint_path defaults to
+    Shared by model.evaluate.evaluate_in_dist, model.evaluate.evaluate_OOD and
+    model.translate, which otherwise repeat this preamble verbatim. checkpoint_path defaults to
     the run's last.pt — pass best.pt explicitly when that's the one you want.
     """
     cfg = load_config(config_path)
@@ -97,3 +98,25 @@ def describe_decoding(cfg: Config) -> str:
     """One-line summary of what cfg.inference asks for, for eval banners."""
     k = cfg.inference.beam_size
     return "greedy" if k <= 1 else f"beam {k}, length penalty {cfg.inference.length_penalty}"
+
+
+def corpus_scores(hyps: list[str], refs: list[str]) -> dict[str, float]:
+    """Corpus BLEU + chrF++ for a hypothesis/reference list pair.
+
+    The single scoring function for the whole project, so model.evaluate.evaluate_in_dist
+    and model.evaluate.evaluate_OOD are never compared across different metric
+    settings — the usual way MT numbers end up quietly incomparable.
+
+    Default sacrebleu tokenization (13a) is correct for an English target. A
+    future en->am direction will need tokenize="none" — no Amharic-aware
+    tokenizer exists in sacrebleu.
+
+    chrF++ (chrF with word_order=2) is reported alongside BLEU because it is what
+    FLORES-200 tables use, and because character n-grams degrade more gracefully
+    than word n-grams when a system is weak — a low-BLEU model can still show
+    real signal in chrF++.
+    """
+    return {
+        "bleu": sacrebleu.corpus_bleu(hyps, [refs]).score,
+        "chrf++": sacrebleu.corpus_chrf(hyps, [refs], word_order=2).score,
+    }

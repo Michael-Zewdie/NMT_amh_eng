@@ -21,7 +21,7 @@ import pickle
 import pandas as pd
 
 from model.common import BOS_ID, EOS_ID, load_tokenizer
-from processing.utils.paths import FINAL, PREPARED
+from process.utils.paths import FINAL, PREPARED
 
 SRC_LANG = "am"
 TGT_LANG = "en"

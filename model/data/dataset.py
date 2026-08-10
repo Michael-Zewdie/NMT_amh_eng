@@ -15,8 +15,8 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 
 from model.common import PAD_ID
-from model.config import Config
-from processing.utils.paths import PREPARED
+from model.configs.config import Config
+from process.utils.paths import PREPARED
 
 
 @dataclass
