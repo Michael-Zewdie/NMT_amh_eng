@@ -43,9 +43,31 @@ SEED = 42
 # corpora, source_lid/target_lid on everything (nllb.csv ships Meta's own, already
 # laser-filtered in collect.py). 0.0 disables a cutoff.
 COSINE_CUTOFF     = 0.8
-AFRICOMET_CUTOFF  = 0.5   # placeholder — needs empirical tuning against real score distributions
 SOURCE_LID_CUTOFF = 0.90
 TARGET_LID_CUTOFF = 0.90
+
+# AfriCOMET-QE floor, per source rather than one number shared by a whole tier.
+# A single curated/mined split was the original design (see CURATED_SOURCES below),
+# but "curated" and "mined" were already standing in for "already human-validated,
+# don't second-guess it" vs. "noisy, gate it hard" — naming the number per source
+# directly means a source that needs its own light garbage floor (e.g. religious.csv's
+# exact verse join, or quran's archaic-Amharic tail dragging AfriCOMET's opinion down
+# without being wrong — see process.py's AFRICOMET_CUTOFFS comment) doesn't have to be
+# force-fit into one of two buckets, and a source added later just gets an entry.
+# processing.utils.sample.sample_by_score is the tool for picking each source's number:
+# it pulls a random band of rows at a candidate cutoff so the number comes from reading
+# real examples, not guessing. 0.0 disables the cutoff for that source; a source with no
+# entry here falls back to DEFAULT_AFRICOMET_CUTOFF (see main()).
+AFRICOMET_CUTOFFS: dict[str, float] = {
+    "gezmu":          0.0,
+    "afridoc_health": 0.0,
+    "afridoc_tech":   0.0,
+    "quran":          0.0,
+    "religious":      0.0,
+    "nllb":           0.5,
+    "ccaligned":      0.5,
+}
+DEFAULT_AFRICOMET_CUTOFF = 0.5   # placeholder — needs empirical tuning against real score distributions
 
 # labse_score and africomet_score are both automated re-checks of alignment/adequacy
 # — the right tool for catching mining errors in nllb.csv/ccaligned.csv, but a poor
@@ -58,10 +80,16 @@ TARGET_LID_CUTOFF = 0.90
 # Bibles (collection/collect_religious.py) — every row is professional human
 # translation of a known verse, with no mining or alignment guesswork, so it
 # belongs in this tier rather than under the mined cutoffs.
+#
+# CURATED_SOURCES still names a *cosine* tier (all-or-nothing, unlike AfriCOMET
+# above): LaBSE's curated tail isn't separable per source the same way — correct
+# Quran verses score as low as real Gezmu misalignments on raw cosine, so no
+# per-source floor reliably tells them apart (see process.py's CURATED_COSINE_CUTOFF
+# comment). AfriCOMET's per-source dict above supersedes what used to be this same
+# set's other half (CURATED_AFRICOMET_CUTOFF, one shared number for the whole tier).
 CURATED_SOURCES          = frozenset({"gezmu", "afridoc_health", "afridoc_tech", "quran",
                                       "religious"})
 CURATED_COSINE_CUTOFF    = 0.0
-CURATED_AFRICOMET_CUTOFF = 0.0
 
 FINAL.mkdir(parents=True, exist_ok=True)
 
@@ -102,11 +130,13 @@ def apply_cutoffs(df: pd.DataFrame, name: str, cosine_cutoff: float,
 
 
 def load_pairs(path, cosine_cutoff: float = COSINE_CUTOFF,
-               africomet_cutoff: float = AFRICOMET_CUTOFF,
+               africomet_cutoff: float = DEFAULT_AFRICOMET_CUTOFF,
                source_lid_cutoff: float = SOURCE_LID_CUTOFF,
                target_lid_cutoff: float = TARGET_LID_CUTOFF) -> pd.DataFrame | None:
     """Read one CSV, apply the quality cutoffs, return an am/en frame — or None if
-    it isn't parallel text.
+    it isn't parallel text. africomet_cutoff here is a single resolved value for
+    this one source (see AFRICOMET_CUTOFFS for the per-source dict main() actually
+    looks up — this default is just DEFAULT_AFRICOMET_CUTOFF's fallback value).
 
     Every source (including nllb.csv) uses am/en columns; the score columns gate the
     rows here and are then trimmed away, along with the rest of the per-source
@@ -365,12 +395,12 @@ def split_semantic(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED,
 
 def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          cosine_cutoff: float = COSINE_CUTOFF,
-         africomet_cutoff: float = AFRICOMET_CUTOFF,
+         africomet_cutoffs: dict[str, float] = AFRICOMET_CUTOFFS,
+         default_africomet_cutoff: float = DEFAULT_AFRICOMET_CUTOFF,
          source_lid_cutoff: float = SOURCE_LID_CUTOFF,
          target_lid_cutoff: float = TARGET_LID_CUTOFF,
          curated_sources: frozenset[str] = CURATED_SOURCES,
          curated_cosine_cutoff: float = CURATED_COSINE_CUTOFF,
-         curated_africomet_cutoff: float = CURATED_AFRICOMET_CUTOFF,
          stratify_semantic: bool = False,
          n_clusters: int = N_CLUSTERS) -> None:
     """Filter every parallel-text CSV in data/processed/ by the quality cutoffs, pool
@@ -381,9 +411,10 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
     and model/train.py embeds it into runs/<name>/manifest.json). See
     processing.utils.manifest for why this exists.
 
-    curated_sources get curated_cosine_cutoff/curated_africomet_cutoff instead of the
-    standard cutoffs — see the CURATED_SOURCES comment for why. LID cutoffs stay the
-    same for every source.
+    curated_sources get curated_cosine_cutoff instead of the standard cosine_cutoff —
+    see the CURATED_SOURCES comment for why. africomet_cutoffs is looked up per source
+    by name (source not listed → default_africomet_cutoff), not by curated/mined tier —
+    see AFRICOMET_CUTOFFS' comment. LID cutoffs stay the same for every source.
 
     stratify_semantic=True nests a semantic-cluster dimension on top of the
     default length-only stratification — see split_semantic()."""
@@ -395,17 +426,17 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
 
     # Pool every parallel-text source: the normalized am/en outputs plus nllb.csv
     # (amh/eng, normalized to am/en). Non-corpus CSVs (e.g. website-stats) are skipped.
-    print(f"[pool] cutoffs (mined): labse_score>{cosine_cutoff}, africomet_score>{africomet_cutoff}, "
+    print(f"[pool] cutoffs: labse_score>{cosine_cutoff} "
+          f"(curated {sorted(curated_sources)}: >{curated_cosine_cutoff}), "
           f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
-    print(f"[pool] cutoffs (curated {sorted(curated_sources)}): "
-          f"labse_score>{curated_cosine_cutoff}, africomet_score>{curated_africomet_cutoff}, "
-          f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
+    print(f"[pool] africomet_score cutoffs (default {default_africomet_cutoff}): " + ", ".join(
+        f"{p.stem}>{africomet_cutoffs.get(p.stem, default_africomet_cutoff)}" for p in processed_paths))
     frames = []
     source_counts = {}  # per-source survivor count, for the manifest below
     for p in processed_paths:
         curated = p.stem in curated_sources
         cos_c = curated_cosine_cutoff if curated else cosine_cutoff
-        afc_c = curated_africomet_cutoff if curated else africomet_cutoff
+        afc_c = africomet_cutoffs.get(p.stem, default_africomet_cutoff)
         df = load_pairs(p, cos_c, afc_c, source_lid_cutoff, target_lid_cutoff)
         if df is None:
             print(f"[pool] skipping {p.name} (not am/en parallel text)")
@@ -429,11 +460,17 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
         "built_at": now(),
         "git": git_info(),
         "cutoffs": {
-            "mined": {"labse_score": cosine_cutoff, "africomet_score": africomet_cutoff,
-                      "source_lid": source_lid_cutoff, "target_lid": target_lid_cutoff},
-            "curated_sources": sorted(curated_sources),
-            "curated": {"labse_score": curated_cosine_cutoff, "africomet_score": curated_africomet_cutoff,
-                        "source_lid": source_lid_cutoff, "target_lid": target_lid_cutoff},
+            "labse_score": {"default": cosine_cutoff, "curated_sources": sorted(curated_sources),
+                             "curated_value": curated_cosine_cutoff},
+            # Per source actually present in this run (source_counts' keys), not the whole
+            # AFRICOMET_CUTOFFS dict — so a manifest only ever names sources that were real
+            # inputs to it, and a source added to the dict but not yet collected doesn't
+            # show up as if it had been.
+            "africomet_score": {"default": default_africomet_cutoff,
+                                 "per_source": {s: africomet_cutoffs.get(s, default_africomet_cutoff)
+                                                for s in source_counts}},
+            "source_lid": source_lid_cutoff,
+            "target_lid": target_lid_cutoff,
         },
         "split_ratios": list(split_ratios),
         "seed": seed,

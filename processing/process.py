@@ -24,33 +24,48 @@ the cache, and only the pool re-runs. Nothing is lost by lowering a cutoff.
 """
 import polars as pl
 
-from processing.utils.paths import CSV_RAW, PROCESSED
+from processing.utils.paths import CSV_RAW, PROCESSED, FINAL
 from processing.clean.filters import clean
+from processing.utils.manifest import read_manifest
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # Quality floors — applied at the pool stage, so changing one is a cheap re-run
 # (scores are cached; no model reloads). 0.0 disables a cutoff.
 COSINE_CUTOFF   = .7               # non-NLLB LaBSE cosine threshold, mined sources
-AFRICOMET_CUTOFF = .80             # AfriCOMET-QE adequacy/fluency floor, mined sources
 SOURCE_LID_CUTOFF = .90            # Amharic LID confidence floor (uniform — every source)
 TARGET_LID_CUTOFF = .90            # English LID confidence floor (uniform — every source)
 # gezmu/afridoc_*/quran are professionally human-translated, already-validated corpora —
 # labse_score/africomet_score are automated re-checks of alignment/adequacy that make
 # sense for mined data, not a substitute for that. See processing.utils.pool.CURATED_SOURCES.
 CURATED_COSINE_CUTOFF    = 0.0
-# 0.15 is a garbage filter, NOT a quality gate — deliberately an order of magnitude
-# below the mined 0.80. Inspecting the curated tail by hand: rows below ~0.10 are
-# genuine off-by-one sentence misalignments (an Amharic clause paired with the
-# adjacent English one) and garbled cells, while everything from ~0.30 up is correct
-# translation that AfriCOMET merely scores low because archaic/liturgical Amharic is
-# out of its distribution. 0.15 sits in that gap: it drops ~310 rows of 173,638
+# AfriCOMET-QE floor, per source (see processing.utils.pool.AFRICOMET_CUTOFFS — this dict
+# is that file's default, overridden here with the values this pipeline actually runs
+# with). 0.15 for the curated sources is a garbage filter, NOT a quality gate —
+# deliberately an order of magnitude below the mined 0.80. Inspecting the curated tail by
+# hand (processing.utils.sample.sample_by_score pulls exactly this kind of band): rows
+# below ~0.10 are genuine off-by-one sentence misalignments (an Amharic clause paired
+# with the adjacent English one) and garbled cells, while everything from ~0.30 up is
+# correct translation that AfriCOMET merely scores low because archaic/liturgical Amharic
+# is out of its distribution. 0.15 sits in that gap: it drops ~310 rows of 173,638
 # (0.18%). Anything at or above 0.6 would cut 44% of quran and 22% of gezmu — the
-# uniform-cutoff mistake this tiering exists to prevent. See EXPERIMENTS.md.
-# CURATED_COSINE_CUTOFF stays 0.0: LaBSE's curated tail is NOT separable the same
-# way — correct Quran verses score as low as real Gezmu misalignments, so no
-# threshold works. Catching those needs a neighbour-relative margin score, not a
-# floor on raw cosine.
-CURATED_AFRICOMET_CUTOFF = 0.15
+# uniform-cutoff mistake this tiering exists to prevent. See EXPERIMENTS.md. Every
+# curated source shares 0.15 today because none has needed a different number yet — this
+# is a dict, not a single CURATED_AFRICOMET_CUTOFF, precisely so one can be tuned on its
+# own the moment it does (e.g. a newly added curated source with its own noise profile).
+AFRICOMET_CUTOFFS = {
+    "gezmu":          0.15,
+    "afridoc_health": 0.15,
+    "afridoc_tech":   0.15,
+    "quran":          0.15,
+    "religious":      0.15,
+    "nllb":           0.80,
+    "ccaligned":      0.80,
+}
+DEFAULT_AFRICOMET_CUTOFF = 0.80    # any processed source not named above (mined-tier default)
+# CURATED_COSINE_CUTOFF stays 0.0 (and un-tiered, unlike AfriCOMET above): LaBSE's
+# curated tail is NOT separable the same way — correct Quran verses score as low as real
+# Gezmu misalignments, so no per-source threshold works. Catching those needs a
+# neighbour-relative margin score, not a floor on raw cosine.
 SEED            = 42                # shuffle / split seed
 AMH_LEN         = (5, 500)          # (min, max) chars kept, Amharic side
 ENG_LEN         = (10, 500)         # (min, max) chars kept, English side
@@ -126,11 +141,11 @@ def main() -> None:
         from processing.utils import pool
         pool.main(split_ratios=SPLIT, seed=SEED,
                   cosine_cutoff=COSINE_CUTOFF,
-                  africomet_cutoff=AFRICOMET_CUTOFF,
+                  africomet_cutoffs=AFRICOMET_CUTOFFS,
+                  default_africomet_cutoff=DEFAULT_AFRICOMET_CUTOFF,
                   source_lid_cutoff=SOURCE_LID_CUTOFF,
                   target_lid_cutoff=TARGET_LID_CUTOFF,
                   curated_cosine_cutoff=CURATED_COSINE_CUTOFF,
-                  curated_africomet_cutoff=CURATED_AFRICOMET_CUTOFF,
                   stratify_semantic=STRATIFY_SEMANTIC,
                   n_clusters=N_CLUSTERS)
 
@@ -146,6 +161,52 @@ def main() -> None:
             semantic_dist.main()
 
     banner("done")
+    report_final_data()
+
+
+def report_final_data() -> None:
+    """Print how much data data/final/ actually holds.
+
+    Counts rows directly from the split CSVs, not manifest.json — data/final/
+    isn't written only by pool.py; one-off experiment scripts (e.g.
+    experiments/gezmu_nmt8k_repro.py) write their own splits there too, each
+    with its own manifest schema, so a manifest-only report would break (or
+    silently misreport) depending on who wrote it last. manifest.json is still
+    read afterward for whatever extra context its particular schema offers.
+
+    Row counts are exact line counts minus the header, not a full CSV parse —
+    the split files can run into the hundreds of thousands of rows and all this
+    needs is a count.
+    """
+    splits = {}
+    for name in ("train", "validation", "test"):
+        path = FINAL / f"{name}.csv"
+        if not path.exists():
+            continue
+        with open(path) as f:
+            splits[name] = sum(1 for _ in f) - 1  # minus the header line
+    if not splits:
+        print(f"[process] no data in {FINAL} yet — run with RUN_POOL=True first")
+        return
+    total = sum(splits.values())
+    parts = " / ".join(f"{name} {n:,}" for name, n in splits.items())
+    print(f"[process] {FINAL}/: {total:,} pairs total ({parts})")
+
+    manifest = read_manifest(FINAL / "manifest.json")
+    if manifest is None:
+        return
+    if "built_by" in manifest:
+        print(f"[process]   built by {manifest['built_by']} at {manifest.get('built_at', '?')}")
+    # pool.py's own schema (processing.utils.pool.main) — richer per-source detail,
+    # absent from one-off experiment scripts' manifests.
+    if "source_survivor_counts" in manifest:
+        dedup = manifest.get("pooled_after_dedup")
+        decontam = manifest.get("pooled_after_decontam")
+        print(f"[process]   pooled after cross-source dedup: {dedup:,}, "
+              f"after benchmark decontamination: {decontam:,}")
+        print("[process]   per-source survivors (post-cutoff, pre-dedup):")
+        for source, n in sorted(manifest["source_survivor_counts"].items()):
+            print(f"[process]     {source}: {n:,}")
 
 
 if __name__ == "__main__":

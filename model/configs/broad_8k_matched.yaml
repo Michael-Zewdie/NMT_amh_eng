@@ -1,0 +1,63 @@
+# am-en-broad-8k — the "diverse domain" counterpart to am-en-gezmu-8k
+# (model/configs/gezmu_8k.yaml), built to test whether domain breadth trades
+# in-distribution BLEU against out-of-distribution generalization.
+#
+# See experiments/broad_8k_matched.py's module docstring for the data-side
+# design (6 sources, gezmu.csv excluded, subsampled to match am-en-gezmu-8k's
+# exact split sizes, tokenizer reused unchanged from that run) and its
+# documented asymmetry (the tokenizer is fit on Gezmu's own vocabulary, not
+# retrained on this broader one — biases against, not for, this arm).
+#
+# Every field below is byte-for-byte identical to model/configs/gezmu_8k.yaml
+# EXCEPT: run_name, data.prepared_dir (points at data/prepared_broad instead
+# of production data/prepared), and training.resume_from (fresh init — no
+# prior run to resume). That is deliberate: the whole point of this config is
+# "same everything, different training-data domain breadth," so architecture/
+# steps/schedule/seed/etc. must not drift from gezmu_8k.yaml even if a better
+# recipe is known — this run is a controlled comparison, not an attempt at a
+# new best model.
+run_name: am-en-broad-8k
+
+model:
+  d_model: 512
+  n_heads: 8
+  n_encoder_layers: 6
+  n_decoder_layers: 6
+  d_ff: 2048
+  dropout: 0.1
+  max_len: 150
+  tie_output_projection: true
+
+data:
+  src_lang: am
+  tgt_lang: en
+  max_src_len: 150
+  max_tgt_len: 150
+  batch_size: 46            # sentences/step — same as gezmu_8k.yaml, NOT
+                             # re-derived from this corpus's own mean length,
+                             # so the two arms train on an identical batch size
+  num_workers: 8
+  prepared_dir: data/prepared_broad   # this arm's own tokenized cache — see
+                                       # experiments/broad_8k_matched.py
+
+training:
+  warmup_steps: 4000
+  label_smoothing: 0.1
+  grad_clip_norm: 1.0
+  accum_steps: 1
+  max_steps: 250000
+  amp_dtype: bf16
+  seed: 42
+  save_every_steps: 5000
+  eval_every_steps: 5000
+  eval_subset_size: 3000
+  log_every_steps: 500
+  checkpoint_avg_n: 12       # so this arm can be decoded the same way as
+                             # am-en-gezmu-8k (beam 4, last-12-checkpoint
+                             # average) for a fair comparison
+  resume_from: null          # fresh init — nothing to resume from
+
+inference:
+  beam_size: 4
+  max_len: 150
+  length_penalty: 0.6
