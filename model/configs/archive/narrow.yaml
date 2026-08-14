@@ -1,4 +1,4 @@
-# am-en-narrow — NARROW arm of the DOMAIN-BREADTH experiment.
+# am-en-narrow-old — NARROW arm of the DOMAIN-BREADTH experiment.
 #
 # HYPOTHESIS:
 #   narrow training domain -> HIGHER in-distribution BLEU, WORSE OOD
@@ -26,7 +26,7 @@
 # but not filtered identically. This varies domain breadth, not provenance quality.
 #
 # Reads data/prepared_narrow/ — swapped into place as data/prepared/am-en.
-run_name: am-en-narrow
+run_name: am-en-narrow-old
 
 model:
   d_model: 512

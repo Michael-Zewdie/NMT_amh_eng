@@ -75,7 +75,7 @@ def paren_balance(df: pl.DataFrame, am_col: str = "am", en_col: str = "en") -> p
     ordinal list marker is discounted (checked on a throwaway copy — the stored
     text is untouched).
 
-    Seen in gezmu.csv/quran.csv: a parenthetical split across a verse boundary at
+    Seen in gezmu.csv: a parenthetical split across a verse boundary at
     the source, leaving one side with a dangling '(' or ')' that refers to content
     in a neighboring row — a fragment, not a complete sentence pair."""
     am_check = pl.col(am_col).str.replace(_LIST_MARKER_RE, "")

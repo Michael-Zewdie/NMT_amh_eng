@@ -4,7 +4,7 @@ decontaminate.py — Strip training rows that overlap a held-out benchmark.
 data/benchmarks/ holds fixed, human-translated eval sets (FLORES-200, MAFAND-MT).
 Keeping them outside csv_raw/ stops them being *pooled* as training data, but it
 can't stop the same sentence arriving independently through a mined source —
-CCAligned and NLLB are both Common Crawl-derived and FLORES is Wikimedia-sourced,
+NLLB is Common Crawl-derived and FLORES is Wikimedia-sourced,
 so genuine overlap is plausible. A benchmark the model has memorized reports a
 score that isn't comparable to anyone else's.
 

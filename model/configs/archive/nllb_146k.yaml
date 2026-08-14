@@ -22,7 +22,7 @@
 # PREDICTION, recorded before running:
 #   in-distribution BLEU LOW relative to the religious arm — its validation split
 #     spans ~1,300 domains, so the exam is genuinely harder.
-#   FLORES/MAFAND HIGHER than the religious arm, and well above am-en-broad's
+#   FLORES/MAFAND HIGHER than the religious arm, and well above am-en-broad-old's
 #     3.02, since this has 2.8x the data and NLLB's cleanest rows.
 run_name: am-en-nllb-146k
 

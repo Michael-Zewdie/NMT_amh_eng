@@ -20,9 +20,8 @@ flowchart TD
     subgraph COL["1 · collect &mdash; python -m collect"]
         direction TB
         HF["AfriDocMT health + tech<br/>HuggingFace"]
-        LOC["Gezmu · Quran / Tanzil<br/>data/raw/local/"]
+        LOC["Gezmu<br/>data/raw/local/"]
         NLP[("NLLB mined bitext<br/>16.1M pairs · parquet")]
-        CCP[("CCAligned<br/>~346k pairs · OPUS")]
     end
 
     CSVR[("data/raw/csv_raw/*.csv")]
@@ -52,7 +51,7 @@ flowchart TD
     PROCD --> POOL
     subgraph POOL["4 · pool &mdash; RUN_POOL · tiered cutoffs"]
         direction TB
-        TIER["<b>curated</b> gezmu · afridoc_health · afridoc_tech · quran<br/>cosine 0.0 · africomet 0.0 → <i>disabled</i><br/><br/><b>mined</b> nllb · ccaligned<br/>cosine &ge; 0.7 · africomet &ge; 0.80<br/><br/><b>uniform, every source</b> LID &ge; 0.90 both sides"]
+        TIER["<b>curated</b> gezmu · afridoc_health · afridoc_tech · religious<br/>cosine 0.15 · africomet 0.15 → <i>garbage trap only</i> · LID <i>disabled</i><br/><br/><b>mined</b> nllb<br/>laser &ge; 1.08 (upstream) · africomet &ge; 0.80 · LID &ge; 0.90"]
         TIER --> MRG["concat → cross-source dedupe on <i>am</i> → seeded shuffle"]
         MRG --> DEC["decontaminate — drop any row overlapping a benchmark"]
         DEC --> SPL["80 / 10 / 10 split, stratified by Amharic length bucket<br/><i>STRATIFY_SEMANTIC=True (optional):</i> also stratified by<br/>k-means cluster (k=16) over mean-pooled English embeddings"]
@@ -87,8 +86,8 @@ losing them permanently.
 
 **Why the tiering exists:** the curated sources are professionally human-translated.
 Applying a QE/alignment cutoff tuned for noisy mined bitext to them gutted Gezmu to
-13,638 of 124,409 pairs and Quran to 446 of 37,380. See EXPERIMENTS.md → "Root-cause
-check against Gezmu et al."
+13,638 of 124,409 pairs (and, when it was still in the corpus, Quran to 446 of
+37,380). See EXPERIMENTS.md → "Root-cause check against Gezmu et al."
 
 ---
 
@@ -200,5 +199,5 @@ deliberately gets *raw* Amharic — normalizing for a black-box system would han
 - Semantic stratification (`STRATIFY_SEMANTIC=True`) clusters the *English* side but
   still groups by `am` for leak prevention — `processing.utils.pool.am_cluster_ids`
   mean-pools every English reference sharing an `am` into one vector first, so a
-  multi-reference `am` (e.g. Quran verses) can't land in different clusters and
+  multi-reference `am` (e.g. religious.csv's 7 English Bibles) can't land in different clusters and
   defeat the grouping.

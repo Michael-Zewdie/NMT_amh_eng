@@ -1,4 +1,4 @@
-# am-en-broad — BROAD arm of the DOMAIN-BREADTH experiment.
+# am-en-broad-old — BROAD arm of the DOMAIN-BREADTH experiment.
 #
 # HYPOTHESIS:
 #   narrow training domain -> HIGHER in-distribution BLEU, WORSE OOD
@@ -26,7 +26,7 @@
 # but not filtered identically. This varies domain breadth, not provenance quality.
 #
 # Reads data/prepared_broad/ — swapped into place as data/prepared/am-en.
-run_name: am-en-broad
+run_name: am-en-broad-old
 
 model:
   d_model: 512

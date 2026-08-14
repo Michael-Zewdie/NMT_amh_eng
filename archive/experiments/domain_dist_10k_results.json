@@ -1,0 +1,212 @@
+{
+  "dd-health10k-s1": {
+    "arm": "health10k",
+    "seed": 1,
+    "beam": 1,
+    "in_dist_own": {
+      "bleu": 8.876903682206072,
+      "test_split_of": "health10k"
+    },
+    "in_dist_cross": {
+      "bleu": 2.8590204095115146,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.3601153288758365,
+      "chrf++": 19.93449925754463
+    },
+    "mafand": {
+      "bleu": 0.9079342867303553,
+      "chrf++": 16.911997421890554
+    }
+  },
+  "dd-health10k-s2": {
+    "arm": "health10k",
+    "seed": 2,
+    "beam": 1,
+    "in_dist_own": {
+      "bleu": 8.223846748434424,
+      "test_split_of": "health10k"
+    },
+    "in_dist_cross": {
+      "bleu": 2.9333287578075904,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.4378720388295354,
+      "chrf++": 19.59998078864249
+    },
+    "mafand": {
+      "bleu": 0.8132530848393985,
+      "chrf++": 16.420300839270087
+    }
+  },
+  "dd-health10k-s3": {
+    "arm": "health10k",
+    "seed": 3,
+    "beam": 1,
+    "in_dist_own": {
+      "bleu": 8.793891544674711,
+      "test_split_of": "health10k"
+    },
+    "in_dist_cross": {
+      "bleu": 2.9938454489726443,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.4373814063719903,
+      "chrf++": 19.859177772959594
+    },
+    "mafand": {
+      "bleu": 0.8146965109567653,
+      "chrf++": 16.79380594673578
+    }
+  },
+  "dd-health10k-s4": {
+    "arm": "health10k",
+    "seed": 4,
+    "beam": 1,
+    "in_dist_own": {
+      "bleu": 8.808183799595255,
+      "test_split_of": "health10k"
+    },
+    "in_dist_cross": {
+      "bleu": 2.7520403694908215,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.2302790072806469,
+      "chrf++": 19.794291590123127
+    },
+    "mafand": {
+      "bleu": 0.8693460443220427,
+      "chrf++": 16.59777233397147
+    }
+  },
+  "dd-health10k-s5": {
+    "arm": "health10k",
+    "seed": 5,
+    "beam": 1,
+    "in_dist_own": {
+      "bleu": 9.16811369690127,
+      "test_split_of": "health10k"
+    },
+    "in_dist_cross": {
+      "bleu": 3.1069803009865393,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.3980000415254985,
+      "chrf++": 20.212580515183575
+    },
+    "mafand": {
+      "bleu": 0.7630843154296957,
+      "chrf++": 17.040958160577564
+    }
+  },
+  "dd-diverse10k-s1": {
+    "arm": "diverse10k",
+    "seed": 1,
+    "beam": 1,
+    "in_dist_cross": {
+      "bleu": 0.7200602326983369,
+      "test_split_of": "health10k"
+    },
+    "in_dist_own": {
+      "bleu": 11.491895758680746,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.2924984128139276,
+      "chrf++": 16.575980138394765
+    },
+    "mafand": {
+      "bleu": 0.724959054015457,
+      "chrf++": 14.735327663348109
+    }
+  },
+  "dd-diverse10k-s2": {
+    "arm": "diverse10k",
+    "seed": 2,
+    "beam": 1,
+    "in_dist_cross": {
+      "bleu": 0.7549884685944666,
+      "test_split_of": "health10k"
+    },
+    "in_dist_own": {
+      "bleu": 11.540315644473306,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.3267105013781204,
+      "chrf++": 16.78532437800698
+    },
+    "mafand": {
+      "bleu": 0.9329113073938969,
+      "chrf++": 14.518267907706614
+    }
+  },
+  "dd-diverse10k-s3": {
+    "arm": "diverse10k",
+    "seed": 3,
+    "beam": 1,
+    "in_dist_cross": {
+      "bleu": 0.7765913213607407,
+      "test_split_of": "health10k"
+    },
+    "in_dist_own": {
+      "bleu": 10.323064225477921,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.2585769979959096,
+      "chrf++": 16.105089419647364
+    },
+    "mafand": {
+      "bleu": 0.7496302025086439,
+      "chrf++": 14.171382096725663
+    }
+  },
+  "dd-diverse10k-s4": {
+    "arm": "diverse10k",
+    "seed": 4,
+    "beam": 1,
+    "in_dist_cross": {
+      "bleu": 0.9061379026542467,
+      "test_split_of": "health10k"
+    },
+    "in_dist_own": {
+      "bleu": 11.701343688945716,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 0.9951676126243115,
+      "chrf++": 16.24365793282557
+    },
+    "mafand": {
+      "bleu": 0.671704875822562,
+      "chrf++": 14.266971798442746
+    }
+  },
+  "dd-diverse10k-s5": {
+    "arm": "diverse10k",
+    "seed": 5,
+    "beam": 1,
+    "in_dist_cross": {
+      "bleu": 0.7452753257939341,
+      "test_split_of": "health10k"
+    },
+    "in_dist_own": {
+      "bleu": 10.706522396647783,
+      "test_split_of": "diverse10k"
+    },
+    "flores": {
+      "bleu": 1.106653822330838,
+      "chrf++": 16.52346160522283
+    },
+    "mafand": {
+      "bleu": 0.7810479598551053,
+      "chrf++": 14.300423855809738
+    }
+  }
+}

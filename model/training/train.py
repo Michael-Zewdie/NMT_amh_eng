@@ -14,7 +14,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from model.common import PAD_ID, get_device, load_checkpoint, load_tokenizer, save_checkpoint, set_seed
+from model.common import (PAD_ID, get_device, load_best_bleu, load_checkpoint, load_tokenizer,
+                          save_checkpoint, save_weights_only, set_seed)
 from model.configs.config import Config, load_config
 from model.data.dataset import TranslationDataset, collate_fn, make_dataloader
 from model.evaluate.evaluate_in_dist import evaluate_loader
@@ -64,8 +65,13 @@ def main() -> None:
     device = get_device()
     print(f"[train] device={device}  run_name={cfg.run_name}")
 
-    src_tokenizer = load_tokenizer(cfg.data.src_lang)
-    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
+    # Honour data.src_tokenizer / data.tgt_tokenizer when the config names them,
+    # exactly as model.common.load_for_inference does. Without this, training
+    # silently used the default data/tokenizer/{am,en} while the prepared .pkl
+    # ids came from the config's tokenizer — the model still trains (both are
+    # 8k), but val BLEU is decoded with the wrong vocabulary.
+    src_tokenizer = load_tokenizer(cfg.data.src_lang, cfg.data.get("src_tokenizer"))
+    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang, cfg.data.get("tgt_tokenizer"))
     train_loader = make_dataloader("train", cfg)
     eval_loader = make_eval_subset_loader(cfg)
     # len(train_loader) counts micro-batches; an "epoch" is in OPTIMIZER steps, of
@@ -82,9 +88,12 @@ def main() -> None:
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID, label_smoothing=cfg.training.label_smoothing)
 
     step = 0
+    resumed_best_bleu = -1.0
     if cfg.training.resume_from:
         step = load_checkpoint(cfg.training.resume_from, model, optimizer, scheduler, map_location=device)
-        print(f"[train] resumed from {cfg.training.resume_from} at step {step}")
+        resumed_best_bleu = load_best_bleu(cfg.training.resume_from, map_location=device)
+        print(f"[train] resumed from {cfg.training.resume_from} at step {step} "
+              f"(best_bleu {resumed_best_bleu:.2f})")
 
     run_dir = RUNS / cfg.run_name
     ckpt_dir = run_dir / "checkpoints"
@@ -93,7 +102,10 @@ def main() -> None:
 
     model.train()
     running_loss, running_count, running_tokens = 0.0, 0, 0
-    best_bleu = -1.0
+    # Restored from the checkpoint on resume, NOT reset to -1.0 — otherwise the
+    # first eval after any resume unconditionally beats it and overwrites a
+    # better pre-interruption best.pt. See model.common.load_best_bleu.
+    best_bleu = resumed_best_bleu
     start_time = time.time()
     data_iter = iter(train_loader)
 
@@ -144,14 +156,25 @@ def main() -> None:
             writer.add_scalar("val/bleu", bleu, step)
             if bleu > best_bleu:
                 best_bleu = bleu
-                save_checkpoint(ckpt_dir / "best.pt", model, optimizer, scheduler, step)
+                save_checkpoint(ckpt_dir / "best.pt", model, optimizer, scheduler, step, best_bleu)
                 print(f"[train] new best val_bleu {bleu:.2f} at step {step} -> {ckpt_dir / 'best.pt'}")
 
         if step % cfg.training.save_every_steps == 0:
-            save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
+            save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step, best_bleu)
             print(f"[train] checkpoint saved at step {step} -> {ckpt_dir / 'last.pt'}")
+            # Rolling weight-only snapshots for checkpoint averaging (Gezmu et al.
+            # decode from an average of the last twelve). Kept separate from
+            # last.pt so the average is over a fixed stride of steps regardless of
+            # how many times the run was interrupted; pruned to the newest N.
+            keep = cfg.training.get("checkpoint_avg_n", 0)
+            if keep:
+                save_weights_only(ckpt_dir / "avg" / f"step{step}.pt", model)
+                snaps = sorted((ckpt_dir / "avg").glob("step*.pt"),
+                               key=lambda p: int(p.stem[4:]))
+                for stale in snaps[:-keep]:
+                    stale.unlink()
 
-    save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step)
+    save_checkpoint(ckpt_dir / "last.pt", model, optimizer, scheduler, step, best_bleu)
     writer.close()
     print(f"[train] finished at step {step}")
 

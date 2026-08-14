@@ -6,7 +6,7 @@ character length into short / medium / long (LENGTH_CUTOFFS — edit that one
 global to reshape the buckets), and writes a pie chart of the split.
 
 Run (from the project root): python -m processing.dist.length_dist
-Outputs: data/processed/figs/length_buckets_pie.png
+Outputs: data/figs/length_buckets_pie.png
 """
 from collections import Counter
 

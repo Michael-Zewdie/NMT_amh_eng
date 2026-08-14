@@ -24,47 +24,47 @@ the cache, and only the pool re-runs. Nothing is lost by lowering a cutoff.
 """
 import polars as pl
 
-from process.utils.paths import CSV_RAW, PROCESSED
-from process.clean.filters import clean
+from processing.utils.paths import CSV_RAW, PROCESSED
+from processing.clean.filters import clean
 
 # ── CONFIG ─────────────────────────────────────────────────────────────────────
 # Quality floors — applied at the pool stage, so changing one is a cheap re-run
 # (scores are cached; no model reloads). 0.0 disables a cutoff.
 COSINE_CUTOFF   = .7               # non-NLLB LaBSE cosine threshold, mined sources
-AFRICOMET_CUTOFF = .80             # AfriCOMET-QE adequacy/fluency floor, mined sources
-SOURCE_LID_CUTOFF = .90            # Amharic LID confidence floor, MINED sources only
-TARGET_LID_CUTOFF = .90            # English LID confidence floor, MINED sources only
-# gezmu/afridoc_*/religious are professionally human-translated, already-validated corpora —
+SOURCE_LID_CUTOFF = .90            # Amharic LID confidence floor (uniform — every source)
+TARGET_LID_CUTOFF = .90            # English LID confidence floor (uniform — every source)
+# gezmu/afridoc_*/quran are professionally human-translated, already-validated corpora —
 # labse_score/africomet_score are automated re-checks of alignment/adequacy that make
 # sense for mined data, not a substitute for that. See processing.utils.pool.CURATED_SOURCES.
-CURATED_COSINE_CUTOFF    = 0.15
-# 0.15 is a garbage filter, NOT a quality gate — deliberately an order of magnitude
-# below the mined 0.80. Inspecting the curated tail by hand: rows below ~0.10 are
-# genuine off-by-one sentence misalignments (an Amharic clause paired with the
-# adjacent English one) and garbled cells, while everything from ~0.30 up is correct
-# translation that AfriCOMET merely scores low because archaic/liturgical Amharic is
-# out of its distribution. 0.15 sits in that gap: it drops ~310 rows of 173,638
-# (0.18%). Anything at or above 0.6 would cut 22% of gezmu (and, when it was still
-# in the corpus, 44% of quran) — the uniform-cutoff mistake this tiering exists to
-# prevent. See EXPERIMENTS.md.
-# The historical caution behind CURATED_COSINE_CUTOFF: LaBSE's curated tail is NOT
-# cleanly separable — correct liturgical verses score as low as real Gezmu
-# misalignments, so no single floor is safe at scale. Catching those properly needs
-# a neighbour-relative margin score, not a floor on raw cosine. 0.15 is set low
-# enough to act only as a garbage trap.
-CURATED_AFRICOMET_CUTOFF = 0.15
-# LID is no longer uniform: 0.0 exempts the curated tier, so SOURCE_LID_CUTOFF /
-# TARGET_LID_CUTOFF above now apply to the MINED sources only (nllb is the only
-# one left since ccaligned was removed on 2026-08-14).
-# On curated text a 0.90 floor is a length artifact rather than an am/en sanity
-# check — fastText LID is unreliable on short strings, and the rows it dropped had
-# median Amharic length 14-15 chars vs 53-83 for rows kept, every inspected one
-# correctly aligned ("ስራ 10፥ 35"/"acts 10: 35.", "የአየር ንብረት ለውጥ"/"Climate change").
-# It was costing 7,751 correct pairs: 5.9% of gezmu, 4.4% of afridoc_tech, 2.8% of
-# afridoc_health. Both directions are exempted because target_lid dropped more of
-# the curated tier than source_lid did. See process.pool.CURATED_SOURCE_LID_CUTOFF.
-CURATED_SOURCE_LID_CUTOFF = 0.0
-CURATED_TARGET_LID_CUTOFF = 0.0
+CURATED_COSINE_CUTOFF    = 0.0
+# AfriCOMET-QE floor, per source (see processing.utils.pool.AFRICOMET_CUTOFFS — this dict
+# is that file's default, overridden here with the values this pipeline actually runs
+# with). 0.15 for the curated sources is a garbage filter, NOT a quality gate —
+# deliberately an order of magnitude below the mined 0.80. Inspecting the curated tail by
+# hand (processing.utils.sample.sample_by_score pulls exactly this kind of band): rows
+# below ~0.10 are genuine off-by-one sentence misalignments (an Amharic clause paired
+# with the adjacent English one) and garbled cells, while everything from ~0.30 up is
+# correct translation that AfriCOMET merely scores low because archaic/liturgical Amharic
+# is out of its distribution. 0.15 sits in that gap: it drops ~310 rows of 173,638
+# (0.18%). Anything at or above 0.6 would cut 44% of quran and 22% of gezmu — the
+# uniform-cutoff mistake this tiering exists to prevent. See EXPERIMENTS.md. Every
+# curated source shares 0.15 today because none has needed a different number yet — this
+# is a dict, not a single CURATED_AFRICOMET_CUTOFF, precisely so one can be tuned on its
+# own the moment it does (e.g. a newly added curated source with its own noise profile).
+AFRICOMET_CUTOFFS = {
+    "gezmu":          0.15,
+    "afridoc_health": 0,
+    "afridoc_tech":   0,
+    "quran":          0.15,
+    "religious":      0.15,
+    "nllb":           0.80,
+    "ccaligned":      0.80,
+}
+DEFAULT_AFRICOMET_CUTOFF = 0.80    # any processed source not named above (mined-tier default)
+# CURATED_COSINE_CUTOFF stays 0.0 (and un-tiered, unlike AfriCOMET above): LaBSE's
+# curated tail is NOT separable the same way — correct Quran verses score as low as real
+# Gezmu misalignments, so no per-source threshold works. Catching those needs a
+# neighbour-relative margin score, not a floor on raw cosine.
 SEED            = 42                # shuffle / split seed
 AMH_LEN         = (5, 500)          # (min, max) chars kept, Amharic side
 ENG_LEN         = (10, 500)         # (min, max) chars kept, English side
@@ -76,17 +76,17 @@ SPLIT           = (0.8, 0.1, 0.1)   # train / validation / test ratios
 # by default so the plain length-only split stays the reproducible default;
 # flip it on deliberately to A/B against every model trained so far.
 N_CLUSTERS         = 16
-STRATIFY_SEMANTIC  = False
+STRATIFY_SEMANTIC  = True
 
 # Every CSV to clean (collect.py put them all here, nllb.csv included).
 CSV_SOURCES = sorted(CSV_RAW.glob("*.csv"))
 
 # ── STAGE TOGGLES ──────────────────────────────────────────────────────────────
-RUN_CLEAN         = True            # clean csv_raw/*.csv → data/processed/
-RUN_LABSE         = False            # annotate labse_score (cached; slow only on unseen text)
-RUN_AFRICOMET     = False            # annotate africomet_score (cached; slow only on unseen text)
-RUN_LID           = False            # annotate source_lid/target_lid (cached; slow only on unseen text)
-RUN_EMBED         = False            # cache English-side embeddings for semantic stratification (cached; slow only on unseen text; only consumed if STRATIFY_SEMANTIC=True)
+RUN_CLEAN         = False            # clean csv_raw/*.csv → data/processed/
+RUN_LABSE         = True            # annotate labse_score (cached; slow only on unseen text)
+RUN_AFRICOMET     = True            # annotate africomet_score (cached; slow only on unseen text)
+RUN_LID           = True            # annotate source_lid/target_lid (cached; slow only on unseen text)
+RUN_EMBED         = True            # cache English-side embeddings for semantic stratification (cached; slow only on unseen text; only consumed if STRATIFY_SEMANTIC=True)
 RUN_POOL          = True            # apply the cutoffs, pool every source + split → data/final/ (+ always regenerates the length-dist chart, + semantic-dist chart when STRATIFY_SEMANTIC=True)
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -105,62 +105,58 @@ def main() -> None:
         for f in CSV_SOURCES:
             df = pl.read_csv(f, infer_schema_length=0)  # all-string, like pandas dtype=str
             print(f"[{f.stem}] input: {df.height}")
-            # nllb.csv is noisy mined bitext — one Amharic sentence can turn up matched
-            # to several English strings of varying mining quality, so am-only dedupe
-            # (keep the first/only row) is the right call. The curated sources can carry
-            # genuine multi-reference translations of the same sentence (religious.csv
-            # joins one Amharic Bible against 7 English ones), so dropping a row there
-            # requires both sides to match, not just the Amharic.
-            # ccaligned was in the am-only list until 2026-08-14, when it and quran were
-            # removed from the codebase entirely — see archive/README.md.
-            dedupe_keys = ("am",) if f.stem == "nllb" else ("am", "en")
+            # nllb.csv and ccaligned.csv are noisy mined bitext — one Amharic sentence can
+            # turn up matched to several English strings of varying mining quality, so
+            # am-only dedupe (keep the first/only row) is the right call. The curated
+            # sources can carry genuine multi-reference translations of the same sentence —
+            # quran.csv alone has up to ~46 independent translator versions per verse — so
+            # dropping a row there requires both sides to match, not just the Amharic.
+            dedupe_keys = ("am",) if f.stem in ("nllb", "ccaligned") else ("am", "en")
             clean(df, f.stem, "am", "en", AMH_LEN, ENG_LEN, dedupe_keys=dedupe_keys).write_csv(PROCESSED / f.name)
 
     if RUN_LABSE:
         banner("score_labse — annotate LaBSE cosine (cached)")
-        from process.scoring import score_labse
+        from processing.utils import score_labse
         score_labse.main()
 
     if RUN_AFRICOMET:
         banner("score_africomet — annotate AfriCOMET-QE africomet_score (cached)")
-        from process.scoring import score_africomet
+        from processing.utils import score_africomet
         score_africomet.main()
 
     if RUN_LID:
         banner("score_lid — annotate fastText LID source_lid/target_lid (cached)")
-        from process.scoring import score_lid
+        from processing.utils import score_lid
         score_lid.main()
 
     if RUN_EMBED:
         banner("score_embed — cache English-side embeddings for semantic stratification (cached)")
-        from process.scoring import score_embed
+        from processing.utils import score_embed
         score_embed.main()
 
     if RUN_POOL:
         banner(f"pool — cutoffs + merge all sources + {SPLIT} split"
                f"{' (semantic-stratified)' if STRATIFY_SEMANTIC else ''}")
-        from process import pool
+        from processing.utils import pool
         pool.main(split_ratios=SPLIT, seed=SEED,
                   cosine_cutoff=COSINE_CUTOFF,
-                  africomet_cutoff=AFRICOMET_CUTOFF,
+                  africomet_cutoffs=AFRICOMET_CUTOFFS,
+                  default_africomet_cutoff=DEFAULT_AFRICOMET_CUTOFF,
                   source_lid_cutoff=SOURCE_LID_CUTOFF,
                   target_lid_cutoff=TARGET_LID_CUTOFF,
                   curated_cosine_cutoff=CURATED_COSINE_CUTOFF,
-                  curated_africomet_cutoff=CURATED_AFRICOMET_CUTOFF,
-                  curated_source_lid_cutoff=CURATED_SOURCE_LID_CUTOFF,
-                  curated_target_lid_cutoff=CURATED_TARGET_LID_CUTOFF,
                   stratify_semantic=STRATIFY_SEMANTIC,
                   n_clusters=N_CLUSTERS)
 
         # A pool run always refreshes the length-distribution report + pie chart,
         # so the reported buckets match the split that just used them.
         banner("length_dist — sentence-length distributions")
-        from process.dist.length import length_dist
+        from processing.dist import length_dist
         length_dist.main()
 
         if STRATIFY_SEMANTIC:
             banner("semantic_dist — semantic-cluster distribution")
-            from process.dist.semantic import semantic_dist
+            from processing.dist import semantic_dist
             semantic_dist.main()
 
     banner("done")

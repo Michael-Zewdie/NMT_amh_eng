@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
 
-from model.architecture.layers.decoder import Decoder
-from model.architecture.layers.embeddings import PositionalEncoding, TokenEmbedding
-from model.architecture.layers.encoder import Encoder
-
+from model.layers.decoder import Decoder
+from model.layers.embeddings import PositionalEncoding, TokenEmbedding
+from model.layers.encoder import Encoder
 
 def make_src_mask(src_pad_mask: torch.Tensor) -> torch.Tensor:
     """[B, S] bool (True=pad) -> [B, 1, 1, S] bool (True=block); broadcasts over heads and query positions."""
@@ -34,24 +33,10 @@ class Seq2SeqTransformer(nn.Module):
         max_len: int,
         pad_id: int,
         tie_output_projection: bool = True,
-        tie_embeddings: bool = False,
     ):
         super().__init__()
         self.src_embed = TokenEmbedding(src_vocab_size, d_model, pad_id)
         self.tgt_embed = TokenEmbedding(tgt_vocab_size, d_model, pad_id)
-        # tie_embeddings is only meaningful with a SHARED source/target vocabulary
-        # (see experiments/domain_breadth/arms.py): once Amharic is transliterated to
-        # Latin, a subword like "ethiopia" is the same id on both sides, and one
-        # shared embedding lets the model copy it across instead of learning the
-        # correspondence from scratch. Meaningless — and wrong — for the separate
-        # Ethiopic/English vocabularies every other run uses, hence default False.
-        if tie_embeddings:
-            if src_vocab_size != tgt_vocab_size:
-                raise ValueError(
-                    f"tie_embeddings requires a shared vocabulary, got src={src_vocab_size} "
-                    f"tgt={tgt_vocab_size}"
-                )
-            self.src_embed = self.tgt_embed
         self.pos_encoding = PositionalEncoding(d_model, max_len, dropout)
 
         self.encoder = Encoder(n_encoder_layers, d_model, n_heads, d_ff, dropout)
@@ -79,7 +64,6 @@ class Seq2SeqTransformer(nn.Module):
             max_len=cfg.model.max_len,
             pad_id=pad_id,
             tie_output_projection=cfg.model.tie_output_projection,
-            tie_embeddings=cfg.model.get("tie_embeddings", False),
         )
         return model.to(device)
 

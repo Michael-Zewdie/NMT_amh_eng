@@ -18,8 +18,8 @@ eyeball whether cluster 3 is "medical text" and cluster 9 is "religious text",
 or whether k=16 is cutting the space somewhere nonsensical.
 
 Run (from the project root): python -m processing.dist.semantic_dist
-Outputs: data/processed/figs/semantic_clusters_bar.png
-         data/processed/figs/semantic_clusters_samples.csv
+Outputs: data/figs/semantic_clusters_bar.png
+         data/figs/semantic_clusters_samples.csv
 """
 from collections import Counter
 
@@ -63,7 +63,7 @@ def sample_sentences(df: pd.DataFrame, clusters: dict, n: int = N_SAMPLES,
     actually contains.
 
     One row per *am* (not per English reference) — a multi-reference am (e.g.
-    quran.csv's ~15 translator versions per verse) would otherwise flood the
+    religious.csv's 7 English Bibles per verse) would otherwise flood the
     sample with near-identical rows and make a cluster look more homogeneous
     than the underlying sentence diversity actually is.
     """

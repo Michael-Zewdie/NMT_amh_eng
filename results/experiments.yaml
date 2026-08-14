@@ -25,8 +25,8 @@ domain-breadth:
     FLORES. A complete rank reversal — which model is "better" depends entirely
     on which number you read.
   runs:
-    - am-en-narrow      # bible-uedin, 41,832 train pairs, one register
-    - am-en-broad       # NLLB mined,  41,850 train pairs, ~1,300 web domains
+    - am-en-narrow-old      # bible-uedin, 41,832 train pairs, one register
+    - am-en-broad-old       # NLLB mined,  41,850 train pairs, ~1,300 web domains
 
 large-domain-breadth:
   question: >

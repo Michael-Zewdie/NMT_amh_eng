@@ -9,8 +9,8 @@ filtering kept or dropped.
 Reading the raw parquet is heavy (~16M rows); only source_url/target_url are
 loaded. Give a top_n on the command line to widen/narrow the bars.
 
-Run (from the project root): python -m processing.dist.domain_dist [top_n]
-Output: data/processed/figs/nllb_domains_bar.png
+Run (from the project root): python -m process.dist.nllb_domain_dist [top_n]
+Output: data/figs/nllb_domains_bar.png
 """
 import sys
 

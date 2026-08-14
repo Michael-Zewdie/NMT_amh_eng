@@ -91,11 +91,333 @@ Two things worth recording from that paper that weren't in this log before:
 - **Their headline 33.0 BLEU (am→en) is specifically the NMT-8K system.** Table 3 sweeps subword vocabulary from 1K to 32K; am→en peaks at 8K (33.0) and *declines* at 16K (32.9) and 32K (32.2). Our own move to 8k vocab was derived independently from token-frequency statistics — the paper corroborates it on this exact language pair.
 - **"Batch size of 1024" is in tokens, not sentences,** because tensor2tensor's `batch_size` counts subwords. Our mean target sequence is 21.13 tokens over 409,443 prepared training pairs, so the config uses `batch_size: 48` (≈1,014 target tokens) with `accum_steps: 1`. At 48 sentences/step, 250k steps ≈ 29 epochs over our pool.
 
-Remaining deviations, all documented in the config: no checkpoint averaging (they decoded an average of the last 12, we decode a single `best.pt`); `model/optim.py` uses AdamW, so torch's default `weight_decay=0.01` applies where Vaswani/t2t used none; different corpus (their 140k vs our pooled ~409k); different subword algorithm (their shared word-piece vs our separate ByteLevel BPE / Unigram, both 8k); `warmup_steps: 4000` is inferred from Vaswani et al. since the paper doesn't state it, and in this repo that also pins peak LR at 6.99e-4.
+Remaining deviations, all documented in the config: no checkpoint averaging (they decoded an average of the last 12, we decode a single `best.pt`); `model/optim.py` uses AdamW, so torch's default `weight_decay=0.01` applies where Vaswani/t2t used none (**since fixed — `model/training/optim.py` now passes `weight_decay=0.0` explicitly, making AdamW identical to plain Adam; this is no longer a deviation as of the v2 runs**); different corpus (their 140k vs our pooled ~409k); different subword algorithm (their shared word-piece vs our separate ByteLevel BPE / Unigram, both 8k); `warmup_steps: 4000` is inferred from Vaswani et al. since the paper doesn't state it, and in this repo that also pins peak LR at 6.99e-4.
 
 **Comparability warning:** their 33.0 is on *their own* 2,500-pair in-domain test split. That is comparable to our in-distribution validation BLEU, **not** to FLORES or MAFAND.
 
 Not yet trained.
+
+---
+
+## v2 domain breadth at 140k pairs (`am-en-gezmu-8k` vs `am-en-broad-8k`) — HYPOTHESIS CONFIRMED
+
+Both runs finished 2026-08-08 but were never scored out-of-domain until 2026-08-11. Same architecture (512d/6+6), same 250,000 steps, same recipe, size-matched at ~140k train pairs; the only difference is corpus breadth — `gezmu` alone (narrow, ~83% Watchtower+Bible register) vs everything *except* gezmu pooled (`afridoc_health/tech, ccaligned, nllb, quran, religious`), so the two arms share zero source overlap. Both scored below from `best.pt`, beam 4, length penalty 0.6, same eval code, same day.
+
+| arm (140k pairs) | in-distribution | FLORES devtest | MAFAND test |
+|---|---|---|---|
+| gezmu-8k (**narrow**) | **28.70** val / 31.22 test (own, checkpoint-averaged) | 4.36 / 25.98 | 2.44 / 21.79 |
+| broad-8k (**broad**) | 17.85 val (own) | **10.73 / 34.98** | **4.94 / 25.47** |
+
+**This is the predicted trade, cleanly:** the narrow arm wins in-distribution by ~11 BLEU, the broad arm wins out-of-distribution by **+6.37 FLORES** and **+2.50 MAFAND** — more than doubling the narrow arm on FLORES. Because FLORES/MAFAND are identical files for both arms, those two columns are directly comparable; the in-distribution column is not (each arm scores its own test set).
+
+**The token confound that wrecked the 10k experiment does not apply here.** Source-token budgets are 3.09M (gezmu) vs 3.52M (broad) — 14% apart, versus 2.9× in the 10k run. A 14% difference cannot explain a 2.5× FLORES gap.
+
+**Caveat on the tokenizer, which biases *against* the winner:** both arms use `data/tokenizer/{am,en}`, the 8k vocab fit on Gezmu's own narrow register. The broad arm's medical/tech/web vocabulary therefore gets worse subword coverage than a corpus-matched tokenizer would give it. Broad wins anyway, which makes the result stronger, not weaker.
+
+---
+
+## Experiment #3 (`am-en-broad`, 2026-08-12) — domain breadth HOLDS at higher model capability
+
+The domain-breadth question asked a third time, with both arms trained under the Gezmu preprocessing recipe (Moses + AT4MT transliteration + shared 8k vocab + tied embeddings). Same corpora and split sizes as experiment #2; each arm fits its own 8k shared Unigram vocabulary on its own transliterated train split (symmetric treatment — see `experiments/domain_breadth/arms.py`). Scored best.pt vs best.pt, beam 4, detokenized.
+
+| arm | own-domain | cross-domain | FLORES devtest | MAFAND test |
+|---|---|---|---|---|
+| **NARROW** `am-en-narrow` | **32.07** / 48.76 | 9.12 / 30.73 | 4.75 / 26.70 | 2.84 / 22.37 |
+| **BROAD** `am-en-broad` | 19.17 / 41.22 | 10.57 / 32.61 | **11.78 / 35.82** | **5.41 / 25.98** |
+| broad − narrow | −12.90 | +1.45 | **+7.03** | **+2.57** |
+
+### ⚠ Those numbers are confounded by capitalisation — use the table below
+
+Discovered 2026-08-14. **Gezmu ships lowercased** — 0.0% of its English has any uppercase, in train, dev *and* test — while the broad corpus (91% of sentences start capitalised), FLORES (98.7%) and MAFAND (92.1%) are all cased. Nothing in the pipeline restores case; `detok_en` only rejoins punctuation, so the narrow model emits lowercase permanently. That inflates the gap from **both** ends: narrow gets a free pass in-domain (lowercase output vs its own lowercase references — its 32.07 is literally unchanged by case-insensitive scoring) and is over-penalised on the cased benchmarks. Measured ceiling on that penalty: a *perfect* translation that is merely lowercase scores **80.1 BLEU on FLORES and 71.6 on MAFAND**, not 100.
+
+Re-scored case-insensitively (same checkpoints, same decoding, same beam — only `.lower()` on both sides before scoring; the cased column reproduced every published number exactly):
+
+| arm | own-domain | cross-domain | FLORES devtest | MAFAND test |
+|---|---|---|---|---|
+| **NARROW** `am-en-narrow` | **32.07** / 48.76 | 12.17 / 33.30 | 6.22 / 28.61 | 4.23 / 24.31 |
+| **BROAD** `am-en-broad` | 20.09 / 42.26 | 14.72 / 35.75 | **12.46 / 36.84** | **5.95 / 27.13** |
+| broad − narrow | −11.98 | +2.55 | **+6.23** | **+1.72** |
+
+**The conclusion survives; the magnitude was overstated.** FLORES +7.03 → **+6.23**, MAFAND +2.57 → **+1.72** (a third of the MAFAND effect was casing). The 2×2 asymmetry gets *sharper* in relative terms: narrow loses **19.9 BLEU** leaving its domain (32.07 → 12.17), broad loses **5.4** (20.09 → 14.72) — a 3.7× difference against 2.7× on the cased numbers. Broad still wins cross-domain transfer, by more than before (+2.55 vs +1.45).
+
+Both scorings are now computed in one pass and stored in `experiments/domain_breadth/results.json` under `bleu`/`chrf++` and `bleu_ci`/`chrf++_ci`; `python -m experiments.domain_breadth eval --lowercase` prints the confound-free table. Retraining narrow on cased text is not possible — Gezmu releases only the lowercased `*.base.*` files — so case-insensitive scoring is the fix, not a data rebuild. **The `am-en-gezmu-8k` reproduction comparison (31.22 vs the paper's 33.0) is unaffected**: Gezmu et al. trained and scored on this same lowercased data, so that one is like-for-like.
+
+**The effect held and did not shrink** (experiment #2 measured +6.37 / +2.50, cased and subject to the same confound). Across all three tests:
+
+| experiment | narrow FLORES | broad FLORES | broad − narrow |
+|---|---|---|---|
+| #1 — 10k pairs, small arch | 1.37 ± 0.09 | 1.20 ± 0.14 | −0.17 (null, both floored) |
+| #2 — 140k, base arch | 4.36 | 10.73 | +6.37 |
+| #3 — 140k + paper preprocessing | 4.75 | 11.78 | +7.03 |
+| #3 again, case-insensitive | 6.22 | 12.46 | +6.23 |
+
+(#1 and #2 have not been re-scored case-insensitively, and #2 has the identical confound — its narrow arm is the same lowercased Gezmu corpus — so the +6.37 there is overstated by roughly the same margin. Only the last row is confound-free.)
+
+**The 2×2 asymmetry is the sharpest form of the result:** off its own domain the narrow model loses **19.9 BLEU** (32.07 → 12.17); the broad model loses **5.4** (20.09 → 14.72), and beats the narrow model on cross-domain transfer. A narrow corpus buys in-domain score that does not survive leaving the domain. (Case-insensitive figures; the cased numbers were 23.0 and 8.6 — see the capitalisation note above.)
+
+**Do not read #2 → #3 as a measured trend.** n=1 per arm, no variance estimate, and #3 deliberately changed the vocabulary design (per-arm fitted, vs #2's shared Gezmu-fit tokenizer), so part of the larger gap is vocabulary rather than domain. The defensible claim is that the effect is robust to model capability, not that it grew.
+
+`am-en-broad` is the **best OOD model at this data scale** — FLORES 11.78 vs `broad-8k`'s 10.73 on identical data, purely from preprocessing. Wall clock 4.27h (resumed once after a power outage at step 63,500; `best_bleu` was correctly restored, so nothing was lost). Full write-up in `results/domain_breadth_results.md`.
+
+**Renamed 2026-08-13.** These two runs were `am-en-gezmu-translit` and `am-en-broad-translit`; the code was `experiments/{gezmu,broad}_translit.py`. They are now `runs/am-en-{narrow,broad}` and `experiments/domain_breadth/{narrow,broad}.py`. Each `manifest.json` carries a `renamed_from` field, and both `train.log`s still print the old name — the numbers above are unchanged. Data and tokenizer dirs kept their `*_translit` names.
+
+---
+
+## `am-en-narrow` (2026-08-11) — the paper's preprocessing recovers +1.32 BLEU
+
+Tests whether Gezmu et al.'s §4.1 preprocessing explains the 1.78 BLEU gap between our reproduction (31.22) and their reported 33.0. A **bundle of five coupled changes** against `am-en-gezmu-8k` — Moses tokenization both sides, Amharic transliterated to Latin via the authors' own AT4MT code, one shared 8k vocabulary replacing two separate 8k, tied source/target embeddings, and English's algorithm forced ByteLevel BPE → Unigram as a rider on sharing. Every other hyperparameter is read from `am-en-gezmu-8k`'s own `manifest.json`, so nothing can drift. Code: `experiments/domain_breadth/arms.py`, `model/tokenize/preprocess.py`.
+
+| metric | `gezmu-8k` | `narrow` | delta |
+|---|---|---|---|
+| in-dist test, un-averaged (like-for-like) | 30.75 | **32.07** | **+1.32** |
+| FLORES devtest | 4.36 / 25.98 | 4.75 / 26.70 | +0.39 |
+| MAFAND test | 2.44 / 21.79 | 2.84 / 22.37 | +0.40 |
+
+Also **~8× faster to converge**: matched the baseline's *final* 250k-step validation (28.70) by step 30,000.
+
+**Mechanism, measured before committing GPU time:** transliteration raises cross-lingual shared subword types 180 → 1,003 (2.3% → 12.5% of types in use), and the shared pieces change from digit strings (`2012`, `144,000`) to named entities (`ethiopia`, `protestant`, `benjamin`, `hospital`) — the paper's stated rationale, confirmed empirically.
+
+**Free partial ablation.** The first build of this run lacked Moses, leaving 21.4% of punctuation glued to words and 376 duplicate vocab entries (`congregation.` vs `congregation`). It scored **4.40 vs 15.81** val BLEU at step 5,000, against the baseline's 9.89 — so Moses does a large share of the work and a shared vocabulary alone is *not sufficient*. Root cause worth remembering: **ByteLevel BPE splits punctuation natively (0.00% glued); SentencePiece Unigram does not (21.4%)**. Unifying the vocabulary silently removed a property English had been getting for free.
+
+**~0.93 BLEU still unexplained.** Top remaining candidate is the subword algorithm: t2t's `SubwordTextEncoder` is greedy-merge/wordpiece, closer to BPE, and on this exact transliterated corpus BPE measured **+59% cross-lingual sharing** (946 → 1,501) with lower fertility. (Avoid ByteLevel BPE here — it shreds the transliteration's non-ASCII `ə ɨ ṗ š ṣ ṭ ž ʷ` into byte pairs.) Then checkpoint averaging, which this run could not use. **Batch size is demoted**: "1024 sentences" would imply 1,808 epochs over 140k pairs (Vaswani did 22.7 on WMT14), and the baseline gained only +0.19 over its last 65,000 steps — an asymptote, not starvation.
+
+**Two cautions recorded from this run.** (1) Mid-run validation hit 33.97 and the baseline's val→test offset suggested ~35.6 on test; actual was 32.07. **Val→test offsets do not transfer across differently-preprocessed models.** (2) Semitic root-and-pattern morphology is *non-concatenative* — `s-b-r` is discontinuous in `səbərə` — so **no** contiguous-substring tokenizer (BPE, Unigram, or WordPiece) can extract Amharic roots. Transliteration's benefit is cross-lingual sharing and finer granularity, not root extraction; an earlier claim in this project that transliteration makes the root "a literal character sequence" was wrong.
+
+Full write-up incl. diversity quantification: `results/domain_breadth_results.md`.
+
+---
+
+## Domain-distribution experiment at 10k pairs (`dd-*`, 2026-08-10) — NULL RESULT
+
+**Question.** Does the domain distribution of a small training corpus trade in-distribution BLEU against out-of-distribution generalization? Two arms matched at 10,000 pooled pairs, 5 seeds each, everything else pinned (same tokenizers — reused, not retrained — same 256d/4+4 architecture, LR, warmup, dropout 0.3, 10,000 steps).
+
+- **HEALTH** — AfriDocMT health, all 10,000 raw pairs, deliberately *unfiltered* (human-translated; a QE model's opinion of it is not evidence). 7,918 train.
+- **DIVERSE** — NLLB mined bitext, top 10,000 by `africomet_score`, 1,116 distinct source web domains. 7,997 train.
+
+Everything reproducible from `experiments/domain_dist_10k.py` (`build` / `train` / `eval` / `report`); per-run configs + manifests under `runs/dd-*/`, scores in `experiments/domain_dist_10k_results.json`.
+
+**Results** (greedy, mean ± std over 5 seeds):
+
+| arm | in-dist (own test) | cross-domain test | FLORES devtest | MAFAND test |
+|---|---|---|---|---|
+| health10k | 8.77 ± 0.34 | 2.93 ± 0.13 | **1.37 ± 0.09** | **0.83 ± 0.06** |
+| diverse10k | 11.15 ± 0.60 | 0.78 ± 0.07 | 1.20 ± 0.14 | 0.77 ± 0.10 |
+
+**The hypothesis was not confirmed.** The diverse arm did *not* generalize better out-of-domain. On FLORES the narrow arm is marginally *higher* (1.37 vs 1.20) — the opposite of the prediction — and on MAFAND the two are tied within noise. Seed variance is small (±0.06–0.14 on the OOD metrics), so this is a real null, not noise.
+
+**Why it's a null rather than a refutation: both arms are on the floor.** ~1.2 BLEU on FLORES is not a weak translation system, it's a non-functional one. Hand-checked hypotheses are fluent English almost entirely decoupled from the source (the health model does correctly emit "diabetes" and a `Dr. … Professor … University` frame on medical sentences, confirming the pipeline is wired correctly and domain signal exists — it just cannot carry a sentence). For scale, `am-en-small-moderate` reaches FLORES 13.94 on the *same architecture* with ~100k+ pairs. **At 8k training pairs, data scale dominates domain composition so completely that the domain effect is unmeasurable.** A domain-breadth question cannot be asked of two models that both fail.
+
+**Two confounds, both discovered during the run and neither fixable after the fact:**
+
+1. **Matching on pair count did not match training signal.** Health carries 348,794 train tokens vs diverse's 119,262 — **2.9×** — because ranking NLLB by `africomet_score` is strongly biased toward short sentences (mean 14.9 vs 44.1 source tokens). QE models rate short simple pairs highly. Any future top-k-by-QE selection should expect this and match on tokens, not rows.
+2. **In-distribution numbers are not comparable between arms.** Each arm's test split has its own intrinsic difficulty, and diverse's sentences are ~3× shorter, hence easier. So diverse's higher own-test BLEU (11.15 vs 8.77) is **not** evidence it is the better model, and the cross-domain column inherits the same asymmetry (health→diverse 2.93 vs diverse→health 0.78 is partly a sentence-length artifact). Only FLORES/MAFAND — identical files for both arms — are clean comparisons here, which is precisely why they are the columns the verdict rests on.
+
+**What would actually answer the question:** rerun at 50–100k pairs per arm, **token-matched rather than row-matched**, with a single-domain source large enough to reach that size (AfriDocMT health caps at 10k total; `religious` has 149k and `gezmu` 124k). Below roughly 50k pairs this architecture does not clear the noise floor on FLORES, so the comparison has no resolving power.
+
+**Superseded 2026-08-11 — see the 140k-pair section above.** That rerun effectively already existed: `am-en-gezmu-8k` (narrow) vs `am-en-broad-8k` (broad), size-matched at 140k pairs, needed only an OOD scoring pass. It confirms the hypothesis decisively (broad +6.37 FLORES, +2.50 MAFAND) and is near token-matched, so **no retrain is needed to answer the domain-breadth question.** What remains unanswerable from scratch is the narrower question of *AfriDocMT health specifically* as the single domain — 10k pairs is its hard ceiling, which is below this architecture's floor. That one needs fine-tuning a pretrained multilingual model rather than training from scratch.
+
+**Process note:** benchmark decontamination caught 3 contaminated rows in the DIVERSE arm, one of them a MAFAND *test* sentence. On a metric that landed at 0.77 BLEU, a single leaked test pair would have been a visible fraction of the score.
+
+---
+
+## v4 data audit (2026-08-14) — what `am-en-base-v4` was actually trained on
+
+Prompted by nothing breaking: v4 is the best model in the project, and the question was
+simply whether its data deserved the credit. Decoded all 511,020 prepared pairs back to
+text through the restored 32k tokenizers (so this is exactly what v4 saw, not a
+reconstruction) and attributed 100% of rows to a source corpus.
+
+**Integrity: clean, no caveats.** 0 duplicate pairs in train, 0 train→validation or
+train→test leakage (0 shared `am`, so the grouping held), 0 empty/`am`==`en`/sub-5-char
+rows, 0 script contamination either direction, and train/val/test composition matched
+within 0.8pp on every source. **The thing most likely to invalidate 26.39 is genuinely
+absent.** The 32,435 repeated `am` in train are Quran's multi-translation structure.
+
+**Composition, and where the noise lives:**
+
+| source | pairs | share | misaligned* |
+|---|---|---|---|
+| nllb | 265,931 | 64.9% | **16.1%** |
+| gezmu | 97,105 | 23.7% | low |
+| quran | 30,360 | 7.4% | n/a (73 rows w/ digits) |
+| ccaligned | 6,659 | 1.6% | — |
+| afridoc_tech / _health | 9,233 | 2.2% | — |
+| religious | 166 | 0.0% | — |
+
+\* Measured on the reliable subpopulation only: both sides carrying a multi-digit Arabic
+numeral, no Ge'ez numerals. **A naive `\d+` detector roughly doubles the rate** (it said
+28.6%) because it flags Ge'ez numerals (`፰`/`፴፪`), Amharic spelled-out numbers
+(*ስምንት*→"8"), and separator formatting (`1፣200` vs `1200`) as mismatches. Roughly **1 in
+10 of all v4 training data is degraded**, not the 1 in 6 the naive detector implied.
+
+**The quality scores cannot see this.** Across deciles, on NLLB:
+
+| | decile 1 | decile 5 | decile 10 | top 1% |
+|---|---|---|---|---|
+| by **AfriCOMET** | 30.9% | 29.3% | **27.1%** | 27.5% |
+| by **LASER** | 38.2% | 25.8% | **4.1%** | 6.5% |
+
+AfriCOMET is flat — it grades adequacy/fluency of a whole sentence, so a fluent pair with
+one swapped entity scores well. It saturates at an error floor near 27% and **cannot be
+tuned past it**: raising the floor 0.80 → 0.92 discards 97.6% of mined rows to move
+misalignment 1.6 points. LASER is a bitext *alignment* score — "are these the same
+sentence" — and separates 9x. At matched retention, `laser>1.08` (45.8% kept, 16.3%
+misaligned) beats `afri>0.84` (46.6% kept, 27.4%) outright.
+
+**The data is dirty because `LASER_CUTOFF = 1.06` sits at the bottom of the useful
+range**, not because the signal was missing. Noise also concentrates by sentence length
+(27.5% under 40 chars → 12.2% at 100–140) and by source site (4.2% to 55%), but LASER
+alone does nearly all the removable work.
+
+**Noise depresses v4's headline number rather than inflating it.** Scoring v4 on
+validation split by whether the reference is intact:
+
+| validation subset | BLEU | chrF++ |
+|---|---|---|
+| NLLB, digits **aligned** | **31.32** | 53.30 |
+| NLLB, no digits | 28.10 | 49.51 |
+| curated | 23.46 | 43.99 |
+| NLLB, digits **mismatched** | **18.62** | 41.59 |
+
+v4 is *better* than 26.39 suggests — ~31 where the reference is trustworthy. When the
+reference says "6 months" and the model correctly says "9 months," the model is punished
+for being right. The errors are also near-misses rather than random pairs: 18.62 on the
+misaligned bucket only happens if the model produces largely-correct output differing on
+one detail. Uncorrelated noise of that kind adds gradient variance, not a learnable false
+pattern — which is why ~10% degraded data does not produce a broken model.
+
+**Per-source in-distribution BLEU** (greedy, 1k-sentence samples), which is why quran was
+dropped from the next experiment:
+
+| ccaligned | nllb | gezmu | afridoc_health | afridoc_tech | **quran** |
+|---|---|---|---|---|---|
+| 31.22 | 27.80 | 27.59 | 25.75 | 23.26 | **14.13** |
+
+Quran's English carries bracketed exegetical commentary the Amharic does not — correctly
+aligned, but unreproducible by any faithful model, and 7.4% of training data spent on it.
+
+**Two pipeline over-filters found while building the follow-up, both costing good data:**
+
+1. **LID 0.9 on curated sources is a length artifact.** Rows it drops have median Amharic
+   length 14–15 chars vs 53–83 for rows it keeps, and inspection found them correctly
+   aligned (`ስራ 10፥ 35`/"acts 10: 35.", `የአየር ንብረት ለውጥ`/"Climate change"). LID classifiers
+   are unreliable on short strings. Cost: 7,751 correct pairs (5.9% of gezmu).
+2. **`script_purity` deletes ~26% of both AfriDoc corpora.** Its Amharic rule
+   `[^ሀ-፿"'\./\(\)°º″0-9\s]` fails any row with a Latin letter in the Amharic column — but
+   medical/technical Amharic embeds the English term inline: `( Haemoglobin)`,
+   `( physiologic)`, `ቫይታሚን B9(folate)`. It also forbids `%` and `-`, so `40%` and
+   `ከ6-59 ወር` fail, and the English rule deletes 140 rows for containing an en-dash.
+   Relaxing it to "predominantly Ge'ez" recovers health 5,809 → 9,798 and tech
+   6,040 → 9,623. **gezmu is not affected** (2.7%; its larger drop is dedupe, correctly
+   collapsing repeated verses). Fixed inside `experiments/clean_recipe/`, not in the
+   production pipeline.
+
+## Experiment #4 (`am-en-clean-lower`, 2026-08-14) — the audit's recipe, COMPLETE
+
+One arm, **250,000 steps** — step-matched to `am-en-narrow` and `am-en-broad`, so the
+FLORES/MAFAND comparison against them is clean. (Launched at a 60,000-step screening
+budget and raised mid-run once val_bleu was still climbing +0.7 per 5k at step 40k. Safe
+to extend because the schedule is Vaswani inverse-sqrt with no `max_steps` term
+— `model/training/optim.py:36` — so a resumed run sees bit-identical learning rates to a
+native one. That would NOT hold under cosine or linear decay.)
+
+**Split: 80/10/10, length-stratified, grouped by `am`** — 238,967 train / 29,826
+validation / 29,876 test. Verified after building: length-bucket shares match across all
+three splits to within 0.1pp (short 37.0/36.9/37.0, medium 57.4/57.4/57.4, long
+5.6/5.6/5.6) and there are **0 shared `am`** between train and either held-out split.
+An earlier build used ~96/2/2 to preserve training data; that was an unrequested
+deviation from the project's standard ratios, caught ~50k steps in, and the run was
+restarted from scratch on the corrected split.
+
+Corpus 298,669 pairs:
+
+| source | pairs | share |
+|---|---|---|
+| nllb (`laser>1.08`, `afri>0.80`) | 155,017 | 51.9% |
+| gezmu (floors 0.15, no LID) | 124,231 | 41.6% |
+| afridoc_health (re-cleaned) | 9,798 | 3.3% |
+| afridoc_tech (re-cleaned) | 9,623 | 3.2% |
+
+Changes from v4: NLLB gated on LASER 1.08 rather than 1.06; quran, ccaligned and
+religious dropped (religious contributed no distinct text — 100% of its rows were already
+in nllb); curated tier enters whole apart from 0.15 LaBSE/AfriCOMET garbage traps; AfriDoc
+re-cleaned; English lowercased following Gezmu's own `*.base.*` release; Gezmu recipe
+(Moses + AT4MT + shared 8k Unigram + tied embeddings, beam 4 / lp 0.6).
+
+**The 0.15 curated floors are near-no-ops but not useless.** AfriCOMET 0.15 drops 44 gezmu
+rows and 0 from either AfriDoc corpus. LaBSE 0.15 drops 144, **133 of which AfriCOMET
+keeps** — and those are flatly misaligned at AfriCOMET scores of 0.35–0.51
+(`የሰዋስው ስርአቱና...` on grammar → "so joseph began to open up the granaries"). The v4 audit's
+LASER-vs-AfriCOMET result repeating one level down: alignment scores see misalignment,
+adequacy scores do not, at any threshold.
+
+**Casing is handled by case-insensitive scoring**, matching `experiments.domain_breadth`
+rather than adding a truecaser — its `_ci` numbers already exist, so this arm drops
+straight into that comparison (`am-en-broad` FLORES 12.46 / MAFAND 5.95, `am-en-narrow`
+6.22 / 4.23). The cased column is reported as a floor and measures missing capital
+letters, not translation quality; a perfect-but-lowercase translation caps at ~80.1 BLEU
+on FLORES. Neither column is comparable to this file's main cased table, and the in-dist
+column is on a different corpus than v4's so it is **not** comparable to 26.39.
+
+**Prediction on record before results:** in-dist will look much higher and most of that is
+artifact (easier corpus + lowercasing); FLORES/MAFAND are fixed and are the real test,
+where +1 to +3 FLORES over `am-en-broad`'s 11.78 cased / 12.46 case-insensitive is the
+honest expectation.
+
+**Still open at eval time:** checkpoint averaging. `checkpoint_avg_n: 12` is populating
+`checkpoints/avg/`, and at 250k the full rolling window exists. Gezmu et al. decoded an
+average of the last 12; this log lists "no checkpoint averaging" as one of the last
+remaining deviations from their recipe, and it was worth part of the gap on
+`am-en-gezmu-8k` (31.22 averaged vs 30.75 single-checkpoint). Cheap to add at eval.
+
+### Results
+
+Training completed all 250,000 steps cleanly. Best in-training val BLEU **31.08 at step
+245,000** (the tail was flat: 30.2–31.1 from step 150k on, while val loss rose from 2.4458
+to 2.4723 — mild overfitting with BLEU holding, the usual label-smoothing signature). The
+run could have stopped around 150k for ~the same model.
+
+Scored with `python -m experiments.clean_recipe eval`, which transliterates the source and
+detokenizes the hypothesis before scoring — `model.evaluate.evaluate_OOD` on its own does
+neither and would have measured a preprocessing mismatch against this arm's translit 8k
+vocabulary.
+
+| checkpoint | in-dist\* | FLORES | MAFAND |
+|---|---|---|---|
+| `best.pt` (245k), cased floor | 28.43 | 14.17 | 5.82 |
+| `best.pt` (245k), **case-insensitive** | 32.10 | 18.07 | 8.34 |
+| `avg12.pt` (195k–250k), cased floor | 29.08 | 14.63 | 5.94 |
+| `avg12.pt` (195k–250k), **case-insensitive** | **32.83** | **18.55** | **8.46** |
+
+chrF++ for the averaged model: 53.69 in-dist / 44.14 FLORES / 31.10 MAFAND.
+
+\* in-dist is this corpus's own 29,876-sentence test split — **not** comparable to v4's 26.39.
+
+**Against the step-matched arms, case-insensitive:**
+
+| model | FLORES | MAFAND |
+|---|---|---|
+| `am-en-clean-lower` (avg12) | **18.55** | **8.46** |
+| `am-en-broad` | 12.46 | 5.95 |
+| `am-en-narrow` | 6.22 | 4.23 |
+
+**The prediction on record was wrong, in the favourable direction.** +1 to +3 FLORES over
+`am-en-broad` was the honest expectation; the actual gap is **+6.09 FLORES / +2.51
+MAFAND** — comparable in size to the domain-breadth effect itself (+6.23 FLORES
+broad-over-narrow). The two stack rather than overlap: breadth decides what distribution
+the model covers, the clean recipe decides how much signal survives inside it. The cased
+FLORES floor alone (14.63) is within noise of `am-en-base-v4`'s 14.97 while being
+structurally unable to emit a capital letter.
+
+**Checkpoint averaging replicates.** +0.48 FLORES, +0.12 MAFAND, +0.73 in-dist over the
+single best checkpoint — same direction and magnitude as the +0.47 measured on
+`am-en-gezmu-8k`. It is no longer an open deviation from the Gezmu recipe.
+
+**Caveat on the averaged checkpoint:** `model.common.average_checkpoints` still has **no
+caller**. `avg12.pt` was materialized by an out-of-repo script that means the averaged
+number is not reproducible from a committed entry point. Folding a `--checkpoint avg` path
+into the eval commands is the obvious follow-up; every run is already paying to store 12
+snapshots for it.
 
 ---
 
@@ -123,13 +445,15 @@ Run by a **separate, parallel Claude Code session** working the same repo concur
 ## Not yet tried / possible next steps
 
 ### Free — no retraining required, do these the day a run finishes
-- **Checkpoint averaging over the last 12 checkpoints.** Gezmu et al. decode from an average, we decode a single `best.pt`. Open deviation in `base_v6.yaml`. Typically +0.3-0.8 BLEU for an afternoon's work on weights already saved to disk.
+- ~~**Checkpoint averaging over the last 12 checkpoints.**~~ **DONE (twice).** Built for `am-en-gezmu-8k`, where it was worth **+0.47** (30.75 → 31.22). Silently **removed by the "Refactor" commit** along with `experiments/average_checkpoints.py`, which is why `am-en-narrow` has no rolling snapshots and cannot be averaged. **Restored 2026-08-11** as `model.common.save_weights_only` + `average_checkpoints`, driven by `training.checkpoint_avg_n` in `model/training/train.py` (weight-only snapshots under `<run>/checkpoints/avg/`, pruned to the newest N). Verified: exact arithmetic mean, dtype preserved, pruning keeps the newest N.
 - **Decoding sweep.** `data/benchmarks/flores200_am_en.csv` reserves a `dev` split precisely so `devtest` stays untouched — sweep `beam_size` 4-8 and `length_penalty` 0.4-1.0 on `dev`, report on `devtest`. ~+0.3-1.0.
 - **Re-score every pre-beam checkpoint under beam 4.** Every BLEU/chrF++ in this file is a *greedy* score (beam search landed after them), so the cross-model table is not comparable to any run scored with beam. Cheap, and it should happen before v6 is compared to anything above.
 
 ### Training-loop fixes
 - **Length bucketing.** `model/data/dataset.py` / `make_dataloader` batch by raw index, so a 5-token sentence and a 150-token one land in the same batch and everything pads to the longest. Two costs: wasted compute on padding, and batch-to-batch variance in effective token count. It is also what forces `batch_size` to be set by the worst case (`base_v5.yaml`'s comment measures 128 sentences peaking at 11.2 GiB purely because one long sentence can drag a batch to `max_src_len`). A length-bucketed sampler would cut padding waste substantially and let the physical batch grow. **Note: this is NOT the cause of the epoch-periodic ripple in `train/loss`** — that was measured (autocorrelation peak at lag 8,500 steps vs 8,517 steps/epoch, ratio 1.00) and is the ordinary within-epoch recency effect, amplitude ±0.02 on a loss of 2.81, absent from `val_loss`. Benign.
-- **`best_bleu` is not restored on resume.** `model/train.py` sets `best_bleu = -1.0` after `load_checkpoint`, so the first eval after any resume overwrites `best.pt` even when it scores *worse* than the pre-interruption best. Harmless while a curve is still rising; silently destroys the best checkpoint when resuming a plateaued run. Fix: persist `best_bleu` in the checkpoint dict and restore it, defaulting to -1.0 when absent (backward compatible). Bit by this during v6 — the step-115,000 best was hand-copied to `best_step115000.pt` as insurance.
+- ~~**`best_bleu` is not restored on resume.**~~ **FIXED, REVERTED, RE-FIXED.** `train.py` set `best_bleu = -1.0` after `load_checkpoint`, so the first eval after any resume overwrote `best.pt` even when it scored *worse* than the pre-interruption best. Harmless while a curve is still rising; silently destroys the best checkpoint when resuming a plateaued run. Fixed once during v6 (the step-115,000 best was hand-copied to `best_step115000.pt` as insurance), then **the "Refactor" commit reverted it** — `save_checkpoint` stopped persisting the field. **Re-fixed 2026-08-11**: `save_checkpoint` stores `best_bleu`, `model.common.load_best_bleu` restores it, defaulting to -1.0 for older checkpoints (backward compatible, verified both paths).
+
+**Both of the above are a warning about this log.** Two items recorded here as *done* were silently undone by a refactor, and nothing caught it until a run needed them. When relying on a fix documented in this file, grep the code and confirm it is still there.
 - Effective batch size is now handled (`accum_steps` exists; v6 deliberately uses 48 sentences ≈ 1024 target tokens to match tensor2tensor's token-counted batch).
 
 ### Data

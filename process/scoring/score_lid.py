@@ -2,7 +2,7 @@
 score_lid.py — Annotate the non-NLLB processed CSVs with fastText language-ID
 confidence scores (source_lid, target_lid). The local analogue to NLLB's own
 source_lid/target_lid columns: the *same* model (Meta's lid218e, 217-language
-fastText) and the *same* two labels (amh_Ethi, eng_Latn), so a Gezmu/AfriDoc/Quran
+fastText) and the *same* two labels (amh_Ethi, eng_Latn), so a Gezmu/AfriDoc
 row carries LID scores directly comparable to an NLLB row.
 
 This stage only ever *adds* columns; it drops nothing. The LID floors are applied

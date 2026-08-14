@@ -57,7 +57,7 @@ def evaluate_loader(model, loader, tgt_tokenizer, cfg: Config, device: torch.dev
 
 def evaluate_split(model, split: str, cfg: Config, device: torch.device,
                    beam_size: int | None = None) -> float:
-    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang)
+    tgt_tokenizer = load_tokenizer(cfg.data.tgt_lang, cfg.data.get("tgt_tokenizer"))
     loader = make_dataloader(split, cfg, shuffle=False)
     return evaluate_loader(model, loader, tgt_tokenizer, cfg, device, beam_size=beam_size)
 

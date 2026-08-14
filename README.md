@@ -1,7 +1,7 @@
 # NMT_amh_eng — Amharic→English machine translation, from scratch
 
 Builds a cleaned, decontaminated Amharic–English parallel corpus from several
-sources (AfriDocMT, Gezmu, Tanzil/Quran, NLLB mined bitext, CCAligned), then
+sources (AfriDocMT, Gezmu, religious Bible corpora, NLLB mined bitext), then
 trains and evaluates a from-scratch Transformer on it — no `transformers`, no
 fairseq; only `torch`, `tokenizers` and `sacrebleu`.
 
@@ -15,9 +15,8 @@ collect/          data acquisition → data/raw/csv_raw/ — one file per source
   __main__.py           registry + CLI (python -m collect); ties the sources below together
   afridoc.py            AfriDocMT health + tech, HuggingFace
   gezmu.py               Gezmu, local parallel files
-  quran.py               OPUS Tanzil/Quran, local parallel files
   nllb.py                 NLLB mined bitext — download parquet + LASER_CUTOFF filter
-  ccaligned.py           OPUS CCAligned, web-mined
+  (quran.py / ccaligned.py were removed 2026-08-14 — see archive/collect/)
 
 processing/       corpus build: clean → annotate → pool → split
   process.py            THE entry point; CONFIG block + stage toggles at the top
@@ -74,7 +73,7 @@ baselines/
 
 data/
   raw/            csv_raw/ (per-source CSVs), local/ (corpora, PDFs),
-                  nllb_full/ · ccaligned_full/ · flores_full/ (downloaded sources)
+                  nllb_full/ · flores_full/ (downloaded sources)
   processed/      per-source cleaned + annotated CSVs; figs/ for generated charts
   scores/         cached LaBSE / AfriCOMET / LID scores, keyed by sentence content
   final/          train / validation / test splits — TRAINING DATA ONLY
@@ -141,10 +140,12 @@ the cutoffs are applied at the pool stage. So retuning a threshold is a re-pool
 than losing them permanently.
 
 **Cutoffs are tiered, not uniform.** `gezmu`, `afridoc_health`, `afridoc_tech` and
-`quran` are professionally human-translated; applying a QE cutoff tuned for noisy
-mined bitext to them gutted Gezmu to 13,638 of 124,409 pairs. Mined sources (`nllb`,
-`ccaligned`) keep the strict floors; LID stays uniform as a sanity check. See
-EXPERIMENTS.md → "Root-cause check against Gezmu et al."
+`religious` are professionally human-translated; applying a QE cutoff tuned for noisy
+mined bitext to them gutted Gezmu to 13,638 of 124,409 pairs. The mined source
+(`nllb`) keeps the strict floors. **LID is tiered too as of 2026-08-14** — on curated
+text a 0.90 floor is a length artifact, not an am/en sanity check, and it was costing
+7,751 correctly-aligned pairs. See EXPERIMENTS.md → "Root-cause check against Gezmu
+et al." and "v4 data audit".
 
 Length buckets come from one global, `LENGTH_CUTOFFS` in `processing/dist/lengths.py`
 (default `(40, 120)` → short `<40`, medium, long `≥120` Amharic chars) — shared by

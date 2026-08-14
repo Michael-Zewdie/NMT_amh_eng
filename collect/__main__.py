@@ -3,11 +3,13 @@ collect — Gather every source into data/raw/csv_raw/ as CSVs.
 
   - AfriDocMT (health, tech) from HuggingFace           → collect.afridoc
   - Gezmu from local parallel files in data/raw/local/  → collect.gezmu
-  - Quran/Tanzil from local parallel files              → collect.quran
   - NLLB: download the mined parquet if missing, then laser-filter it down to a
     tractable am/en CSV (csv_raw/nllb.csv)              → collect.nllb
-  - CCAligned: download the OPUS moses-format am-en release (~346k pairs, web-mined)
-                                                          → collect.ccaligned
+
+REMOVED 2026-08-14: quran (Tanzil) and ccaligned (OPUS). Both are archived intact
+under archive/collect/ and archive/data/, along with their raw and processed CSVs,
+so restoring either is a `mv` plus re-adding its SOURCES entry below. Neither is
+part of the corpus any more — see archive/README.md for why.
 
 One file per source (this file is just the registry + CLI that ties them
 together) — each is independently runnable/importable, e.g.
@@ -20,28 +22,26 @@ NLLB parquet is handled here, not there. Run (from the project root):
     python -m collect nllb     # just NLLB — the LASER_CUTOFF loop (~3s, no network)
     python -m collect --force  # rebuild everything from scratch
 
-Re-running a source is only useful when its *input* changed. Gezmu and Quran read
-fixed local files, and AfriDoc is pinned to a HuggingFace release, so their CSVs
-can't change between runs — a default run skips them once they exist. That also
-keeps `load_dataset` from round-tripping to HuggingFace, which it does on every
-call even with a warm cache (~5s, and the one thing here that stalls on a bad
-connection). CCAligned is a fixed OPUS release too, same story.
+Re-running a source is only useful when its *input* changed. Gezmu reads fixed
+local files and AfriDoc is pinned to a HuggingFace release, so their CSVs can't
+change between runs — a default run skips them once they exist. That also keeps
+`load_dataset` from round-tripping to HuggingFace, which it does on every call
+even with a warm cache (~5s, and the one thing here that stalls on a bad
+connection).
 
 NLLB is different: its CSV depends on the cutoffs in collect/nllb.py, so
 tuning one means rebuilding it. Name it explicitly (`python -m collect nllb`)
 — an explicitly named source always rebuilds, skip-if-exists only applies to a
 default run.
 
-Outputs: data/raw/csv_raw/{afridoc_health,afridoc_tech,gezmu,quran,nllb,ccaligned}.csv
+Outputs: data/raw/csv_raw/{afridoc_health,afridoc_tech,gezmu,nllb}.csv
 """
 import argparse
 import sys
 
 from collect.afridoc import collect_afridoc
-from collect.ccaligned import collect_ccaligned
 from collect.gezmu import collect_gezmu
 from collect.nllb import collect_nllb
-from collect.quran import collect_quran
 from process.utils.paths import CSV_RAW
 
 # Each source, with the CSV(s) it produces — the outputs a default run checks for
@@ -49,9 +49,7 @@ from process.utils.paths import CSV_RAW
 SOURCES: dict[str, tuple] = {
     "afridoc":   (collect_afridoc,   ("afridoc_health.csv", "afridoc_tech.csv")),
     "gezmu":     (collect_gezmu,     ("gezmu.csv",)),
-    "quran":     (collect_quran,     ("quran.csv",)),
     "nllb":      (collect_nllb,      ("nllb.csv",)),
-    "ccaligned": (collect_ccaligned, ("ccaligned.csv",)),
 }
 
 

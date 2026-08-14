@@ -23,6 +23,10 @@ data:
   # fails with a size mismatch against today's default 8k vocabulary.
   src_tokenizer: data/tokenizer/am_32k_v4
   tgt_tokenizer: data/tokenizer/en_32k_v4
+  # Restored from archive/ 2026-08-14 under its own name rather than the default
+  # data/prepared, so it cannot be confused with any 8k-era cache. 409,454 train
+  # pairs, tokenized against the 32k vocabularies named above.
+  prepared_dir: data/prepared_v4_32k
   max_src_len: 128
   max_tgt_len: 128
   batch_size: 128

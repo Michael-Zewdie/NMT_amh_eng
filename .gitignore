@@ -2,6 +2,12 @@
 /data/
 /OCR
 
+# Archived bulk — the OCR tree carries its own .venv (12 GB) and archive/data is
+# another 1.1 GB. The patterns above are root-anchored and do not reach these.
+# archive/ code (collect/, processing/, experiments/) is still tracked.
+archive/OCR/
+archive/data/
+
 # Training artifacts — checkpoints + TensorBoard logs, regenerable via model/train.py
 runs/
 
@@ -14,6 +20,7 @@ __pycache__/
 
 # Python virtual environment
 venv/
+.venv/
 
 # Secrets
 .env

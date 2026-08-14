@@ -47,20 +47,47 @@ SOURCE_LID_CUTOFF = 0.90
 TARGET_LID_CUTOFF = 0.90
 
 # labse_score and africomet_score are both automated re-checks of alignment/adequacy
-# — the right tool for catching mining errors in nllb.csv/ccaligned.csv, but a poor
+# — the right tool for catching mining errors in nllb.csv, but a poor
 # substitute for the professional human translation these sources already carry.
 # Gezmu et al. (LREC 2022) got 33.0 BLEU on this exact architecture training on all
 # 140k Gezmu pairs, unfiltered — gating 90% of it out on an imperfect QE model's
-# opinion throws away already-validated data. LID stays uniform across every source:
-# it's a basic sanity check (is this row actually am/en), not a quality judgment.
+# opinion throws away already-validated data.
 # religious.csv is an exact verse-ID join of one Amharic Bible against 7 English
 # Bibles (collection/collect_religious.py) — every row is professional human
 # translation of a known verse, with no mining or alignment guesswork, so it
 # belongs in this tier rather than under the mined cutoffs.
-CURATED_SOURCES          = frozenset({"gezmu", "afridoc_health", "afridoc_tech", "quran",
+# quran was removed from this set (and from the codebase) on 2026-08-14 along with
+# ccaligned — both are archived under archive/collect/ and archive/data/.
+CURATED_SOURCES          = frozenset({"gezmu", "afridoc_health", "afridoc_tech",
                                       "religious"})
 CURATED_COSINE_CUTOFF    = 0.0
 CURATED_AFRICOMET_CUTOFF = 0.0
+
+# LID USED TO BE UNIFORM ACROSS EVERY SOURCE. It no longer is, because on curated
+# text it is a LENGTH artifact rather than the "is this row actually am/en" sanity
+# check it was intended as. fastText LID is unreliable on short strings, and the
+# curated corpora are full of legitimately short rows: measured before changing
+# this, the rows a 0.90 floor drops have median Amharic length 14-15 characters
+# against 53-83 for the rows it keeps, and hand inspection found them correctly
+# aligned —
+#     "ስራ 10፥ 35"              / "acts 10: 35."     (verse reference)
+#     "የአየር ንብረት ለውጥ"          / "Climate change"
+#     "ኣለም ድርብ ሃላፊነት ተጋርጦባታል።"  / "The world is facing a double mandate."  (source_lid 0.01)
+# Cost of the uniform floor: 5.9% of gezmu, 4.4% of afridoc_tech, 2.8% of
+# afridoc_health — 7,751 correct pairs.
+#
+# Both directions are exempted, not just source_lid: target_lid drops MORE of the
+# curated tier than source_lid does (gezmu -6,226 vs -5,067; afridoc_health -148 vs
+# -25), so exempting only the source side would leave most of the loss in place.
+#
+# The mined sources keep the floor, where it does the job it was written for.
+#
+# NOTE, since ccaligned was removed on 2026-08-14: nllb is now the ONLY mined
+# source, and it is already LID-gated upstream by collect/nllb.py's own floors, so
+# the pool-time LID filter currently drops 0 rows from every source. It is kept as
+# a live guard for the next mined source rather than because it does work today.
+CURATED_SOURCE_LID_CUTOFF = 0.0
+CURATED_TARGET_LID_CUTOFF = 0.0
 
 FINAL.mkdir(parents=True, exist_ok=True)
 
@@ -123,8 +150,8 @@ def pool(frames: list[pd.DataFrame], seed: int = SEED) -> pd.DataFrame:
     """Combine sources: concat → cross-source dedup on (am, en) → seeded shuffle.
 
     Deduping on the pair rather than am alone preserves legitimate multi-reference
-    translations (e.g. quran.csv's several independent translator versions of one
-    verse) instead of collapsing them to a single row; it only drops an exact
+    translations (e.g. religious.csv's 7 English Bibles against one Amharic verse)
+    instead of collapsing them to a single row; it only drops an exact
     repeat of both sides, including the same pair reappearing across sources.
     """
     combined = pd.concat(frames, ignore_index=True)
@@ -169,8 +196,8 @@ def split(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED) -> dict[st
     reshuffled so buckets interleave rather than sit in blocks.
 
     The split is grouped by am, not sliced row-by-row: since pool() now keeps
-    multiple English references for the same Amharic sentence (e.g. quran.csv's
-    ~15 translator versions per verse) instead of collapsing them, splitting by
+    multiple English references for the same Amharic sentence (e.g. religious.csv's
+    7 English Bibles per verse) instead of collapsing them, splitting by
     row would let the same source sentence land in both train and test with a
     different reference — leaking the answer rather than testing generalization.
     Grouping means the split ratios apply to *distinct sentences*, not rows, so a
@@ -228,7 +255,7 @@ def am_cluster_ids(df: pd.DataFrame, k: int = N_CLUSTERS, seed: int = SEED,
     split_semantic() clusters on the *English* side (per the project's own
     request) but still has to group by am for leak-prevention (see split()'s
     docstring) — a single am can carry several independent English references
-    (e.g. quran.csv's ~15 translator versions per verse), which would otherwise
+    (e.g. religious.csv's 7 English Bibles per verse), which would otherwise
     land in different clusters and defeat that grouping. Mean-pooling (then
     L2-renormalizing) every en embedding sharing an am collapses each group back
     to one vector before clustering, so every row sharing an am always gets the
@@ -319,6 +346,45 @@ def split_semantic(df: pd.DataFrame, ratios=(0.8, 0.1, 0.1), seed: int = SEED,
     return splits
 
 
+def split_domain(df: pd.DataFrame, domain_col: str, ratios=(0.8, 0.1, 0.1),
+                  seed: int = SEED) -> dict[str, pd.DataFrame]:
+    """Length- *and* domain-stratified train/val/test split -> data/final/.
+
+    Same shape as split_semantic() — bucket, shuffle, cut, recombine, reshuffle,
+    write — but strata are (length bucket x domain_col) cells instead of
+    (length bucket x semantic cluster). Unlike length and semantic cluster,
+    "domain" has no single definition this pipeline can compute on its own —
+    the caller supplies domain_col already populated (e.g. one label per source
+    corpus, or a collapsed top-N registered website domain for mined text; see
+    experiments/stratification/splits.py). domain_col is dropped from the output along
+    with the scratch length bucket, so every data/final/*.csv keeps the same
+    am/en-only schema regardless of which split function produced it.
+    """
+    df = df.copy()
+    df["_bucket"] = bucketize(df["am"].str.len().to_numpy())
+
+    parts: dict[str, list[pd.DataFrame]] = {"train": [], "validation": [], "test": []}
+    for (_b, _d), grp in df.groupby(["_bucket", domain_col]):
+        uniq_am = grp["am"].drop_duplicates().sample(frac=1, random_state=seed).reset_index(drop=True)
+        n_train, n_val, _n_test = _cut(len(uniq_am), ratios)
+        train_am = set(uniq_am.iloc[:n_train])
+        val_am   = set(uniq_am.iloc[n_train : n_train + n_val])
+        parts["train"].append(grp[grp["am"].isin(train_am)])
+        parts["validation"].append(grp[grp["am"].isin(val_am)])
+        parts["test"].append(grp[~grp["am"].isin(train_am) & ~grp["am"].isin(val_am)])
+
+    splits = {}
+    for name, chunks in parts.items():
+        s = pd.concat(chunks).sample(frac=1, random_state=seed).reset_index(drop=True)
+        splits[name] = s.drop(columns=["_bucket", domain_col])
+
+    for name, part in splits.items():
+        path = FINAL / f"{name}.csv"
+        part.to_csv(path, index=False)
+        print(f"final/{name}: {len(part)} pairs → {path}")
+    return splits
+
+
 def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          cosine_cutoff: float = COSINE_CUTOFF,
          africomet_cutoff: float = AFRICOMET_CUTOFF,
@@ -327,14 +393,16 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
          curated_sources: frozenset[str] = CURATED_SOURCES,
          curated_cosine_cutoff: float = CURATED_COSINE_CUTOFF,
          curated_africomet_cutoff: float = CURATED_AFRICOMET_CUTOFF,
+         curated_source_lid_cutoff: float = CURATED_SOURCE_LID_CUTOFF,
+         curated_target_lid_cutoff: float = CURATED_TARGET_LID_CUTOFF,
          stratify_semantic: bool = False,
          n_clusters: int = N_CLUSTERS) -> None:
     """Filter every parallel-text CSV in data/processed/ by the quality cutoffs, pool
     them, and split into data/final/.
 
-    curated_sources get curated_cosine_cutoff/curated_africomet_cutoff instead of the
-    standard cutoffs — see the CURATED_SOURCES comment for why. LID cutoffs stay the
-    same for every source.
+    curated_sources get the curated_* cutoffs instead of the standard ones — LID
+    included, as of 2026-08-14. See the CURATED_SOURCE_LID_CUTOFF comment for why
+    LID stopped being uniform across every source.
 
     stratify_semantic=True nests a semantic-cluster dimension on top of the
     default length-only stratification — see split_semantic()."""
@@ -350,13 +418,15 @@ def main(split_ratios=(0.8, 0.1, 0.1), seed: int = SEED,
           f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
     print(f"[pool] cutoffs (curated {sorted(curated_sources)}): "
           f"labse_score>{curated_cosine_cutoff}, africomet_score>{curated_africomet_cutoff}, "
-          f"source_lid>{source_lid_cutoff}, target_lid>{target_lid_cutoff}")
+          f"source_lid>{curated_source_lid_cutoff}, target_lid>{curated_target_lid_cutoff}")
     frames = []
     for p in processed_paths:
         curated = p.stem in curated_sources
         cos_c = curated_cosine_cutoff if curated else cosine_cutoff
         afc_c = curated_africomet_cutoff if curated else africomet_cutoff
-        df = load_pairs(p, cos_c, afc_c, source_lid_cutoff, target_lid_cutoff)
+        slid_c = curated_source_lid_cutoff if curated else source_lid_cutoff
+        tlid_c = curated_target_lid_cutoff if curated else target_lid_cutoff
+        df = load_pairs(p, cos_c, afc_c, slid_c, tlid_c)
         if df is None:
             print(f"[pool] skipping {p.name} (not am/en parallel text)")
         else:

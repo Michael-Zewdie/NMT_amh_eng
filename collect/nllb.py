@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 from process.utils.paths import CSV_RAW, NLLB_FULL
 
 # NLLB laser_score threshold: 1.1 keeps the top ~1.5% (~425k of 16.1M pairs).
-LASER_CUTOFF = 1.06
+LASER_CUTOFF = 1.08
 # fastText LID (lid218e) confidence floors, mirrored on the non-NLLB side by
 # process.scoring.score_lid. source = Amharic (amh_Ethi), target = English
 # (eng_Latn). NLLB pre-filtered target_lid >= 0.95; source_lid has a noisy tail

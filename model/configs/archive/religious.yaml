@@ -15,7 +15,7 @@
 # (409k pairs). Two deliberate departures from the v6/narrow/broad chain:
 #
 #   dropout 0.2 (not 0.1) — 118k pairs against ~65M parameters overfits at 0.1.
-#     am-en-narrow showed it plainly: train loss fell while val_loss rose 5.61 ->
+#     am-en-narrow-old showed it plainly: train loss fell while val_loss rose 5.61 ->
 #     5.69 over its last 6k steps. 0.2 is the standard remedy at this scale
 #     (cf. Sennrich & Zhang 2019 on low-resource NMT).
 #   max_steps 61000 — 117,658/48 = 2,451 steps/epoch, so ~25 epochs. Matching
