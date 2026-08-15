@@ -1,53 +1,28 @@
-# Direct dependencies, pinned to the versions this project was trained and
-# evaluated with. Transitive packages are left to the resolver, including the
-# nvidia-*/triton wheels that pip pulls in automatically alongside torch.
+# Core — everything needed to load a model and translate or evaluate.
+# Installs cleanly on Linux/CUDA and on macOS (Intel or Apple Silicon).
 #
 #   python -m venv venv && . venv/bin/activate
 #   pip install -r requirements.txt
 #
-# Python 3.12.3 on Linux x86-64 is what everything here was run on.
+# The data pipeline (collection, AfriCOMET/LID scoring, semantic clustering)
+# needs the heavier set in requirements-pipeline.txt. You do not need it to run
+# the trained models.
 #
-# TORCH IS THE ONE LINE TO CHECK. The pin below is the CUDA 12.1 build and needs
-# an NVIDIA GPU plus the matching extra index:
-#
+# torch is version-gated because 2.5.1 — what the models were trained on — has
+# no wheels for Python 3.13. On 3.13 you get 2.6+, which loads these checkpoints
+# fine. On Linux the default PyPI wheel is CUDA-enabled; to reproduce the exact
+# training build use:
 #   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-#
-# On a CPU-only machine or an Apple Silicon Mac, drop the +cu121 suffix and
-# install plain `torch==2.5.1` instead — training is impractical without a GPU,
-# but translation and evaluation run fine, just slowly.
-torch==2.5.1+cu121
+torch==2.5.1 ; python_version < "3.13"
+torch>=2.6 ; python_version >= "3.13"
 
-# Modelling / tokenization
-tokenizers==0.22.2
-sentencepiece==0.2.2
-transformers==4.57.6
-sentence-transformers==5.6.1
-huggingface_hub==0.36.2
-datasets==5.0.1
+tokenizers>=0.22
+sacrebleu>=2.6
+polars>=1.43
+pandas>=2.2
+numpy>=1.26
+PyYAML>=6.0
 
-# Evaluation
-sacrebleu==2.6.0
-sacremoses==0.1.1
-unbabel-comet==2.2.7
-torchmetrics==0.10.3
-
-# Data handling
-polars==1.43.1
-pandas==3.0.5
-numpy==1.26.4
-pyarrow==25.0.0
-scikit-learn==1.9.0
-scipy==1.17.1
-
-# Collection / scraping
-requests==2.34.2
-lxml==6.1.1
-tldextract==5.3.1
-fasttext==0.9.3
-
-# Misc
-PyYAML==6.0.3
-matplotlib==3.11.1
-tensorboard==2.21.0
-tqdm==4.70.0
-regex==2026.7.19
+# Training only — harmless elsewhere, and small.
+tensorboard>=2.18
+tqdm>=4.67

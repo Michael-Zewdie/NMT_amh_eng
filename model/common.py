@@ -54,7 +54,17 @@ def set_seed(seed: int) -> None:
 
 
 def get_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """CUDA, else Apple Silicon's MPS, else CPU.
+
+    MPS is worth several times CPU for decoding on a Mac. It is not used for
+    training: model.training.train autocasts to bf16, which MPS does not
+    support, and no run in this project was trained on one.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def save_checkpoint(path, model, optimizer, scheduler, step: int, best_bleu: float | None = None) -> None:

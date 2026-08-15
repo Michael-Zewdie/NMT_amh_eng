@@ -1,0 +1,26 @@
+# Data pipeline only — collection, filtering, quality scoring, analysis.
+# Not needed to run the trained models; see requirements.txt for that.
+#
+#   pip install -r requirements.txt -r requirements-pipeline.txt
+#
+# Two of these are awkward outside Linux:
+#   unbabel-comet  pins numpy<2.0 and will downgrade numpy underneath you.
+#   fasttext       builds from source and needs a working C++ toolchain; on
+#                  macOS install Xcode command line tools first, or skip it and
+#                  avoid process.scoring.score_lid.
+unbabel-comet>=2.2
+fasttext>=0.9.3
+
+transformers>=4.57
+sentence-transformers>=5.6
+datasets>=5.0
+huggingface_hub>=0.36
+
+scikit-learn>=1.9
+scipy>=1.14
+pyarrow>=18
+
+requests>=2.32
+lxml>=5.0
+tldextract>=5.3
+matplotlib>=3.9

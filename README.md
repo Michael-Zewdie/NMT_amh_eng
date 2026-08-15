@@ -174,13 +174,20 @@ invoke from.
 
 ```bash
 python -m venv venv && . venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt                        # run the models
+pip install -r requirements-pipeline.txt               # + rebuild the data
 ```
 
-Pinned to the versions everything here was trained and evaluated with, on Python
-3.12.3 / Linux x86-64. **The `torch` pin is the CUDA 12.1 build** — see the note at
-the top of `requirements.txt` for the CPU and Apple Silicon variants. Training needs
-an NVIDIA GPU; translation and evaluation run on CPU, just slowly.
+`requirements.txt` is the small set needed to load a checkpoint and translate or
+evaluate, and installs on Linux/CUDA and macOS alike. Everything for collection,
+filtering and quality scoring lives in `requirements-pipeline.txt`, which is heavier
+and less portable — `unbabel-comet` drags numpy back below 2.0, and `fasttext`
+builds from source.
+
+Developed on Python 3.12 / Linux x86-64 with torch 2.5.1+cu121. Python 3.13 works
+but has no 2.5.1 wheels, so it resolves to torch 2.6+; the checkpoints load either
+way. Training needs an NVIDIA GPU (it autocasts to bf16). Translation and evaluation
+run anywhere — CUDA, Apple Silicon via MPS, or CPU.
 
 `torch`, `tokenizers`, `sacrebleu`, `polars`, `pandas`, `numpy`, `matplotlib`,
 `sentence-transformers`, `scikit-learn` (k-means for semantic stratification),
