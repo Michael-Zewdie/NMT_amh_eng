@@ -172,6 +172,16 @@ invoke from.
 
 ## Dependencies
 
+```bash
+python -m venv venv && . venv/bin/activate
+pip install -r requirements.txt
+```
+
+Pinned to the versions everything here was trained and evaluated with, on Python
+3.12.3 / Linux x86-64. **The `torch` pin is the CUDA 12.1 build** — see the note at
+the top of `requirements.txt` for the CPU and Apple Silicon variants. Training needs
+an NVIDIA GPU; translation and evaluation run on CPU, just slowly.
+
 `torch`, `tokenizers`, `sacrebleu`, `polars`, `pandas`, `numpy`, `matplotlib`,
 `sentence-transformers`, `scikit-learn` (k-means for semantic stratification),
 `datasets`, `pyarrow`, `tldextract`, `fasttext`,
