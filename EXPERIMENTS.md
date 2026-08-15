@@ -309,8 +309,22 @@ aligned, but unreproducible by any faithful model, and 7.4% of training data spe
    `ከ6-59 ወር` fail, and the English rule deletes 140 rows for containing an en-dash.
    Relaxing it to "predominantly Ge'ez" recovers health 5,809 → 9,798 and tech
    6,040 → 9,623. **gezmu is not affected** (2.7%; its larger drop is dedupe, correctly
-   collapsing repeated verses). Fixed inside `experiments/clean_recipe/`, not in the
-   production pipeline.
+   collapsing repeated verses).
+
+   **Superseded 2026-08-15.** The fix originally lived in `experiments/clean_recipe/` as
+   a `reclean()` that re-ran a private copy of the pipeline from raw. It now lives in the
+   production pipeline: `process.clean.filters.SCRIPT_PURITY_EXEMPT` skips the step for
+   these two sources outright, so `data/processed/` carries the recovered rows and no
+   experiment needs its own cleaning path. The Amharic rule was simplified at the same
+   time to `[^ሀ-፿"'.()0-9\s]` — Ethiopic block, Arabic numerals, whitespace, and only the
+   four ASCII marks `normalize` deliberately leaves behind. Measured against the old rule,
+   holding every other step fixed: gezmu −1,028 (loses `/` and `°º″`), afridoc_health
+   +2,597, afridoc_tech +2,496, religious unchanged.
+
+   **`am-en-clean-lower` was trained before this change** and its corpus counts below are
+   the `reclean()` ones. Rebuilding `data/processed/` now yields health 9,832 and tech
+   9,665 instead of 9,798 and 9,623 — close, but not identical, so a rebuilt corpus is not
+   bit-for-bit the one that produced the FLORES 18.55 result.
 
 ## Experiment #4 (`am-en-clean-lower`, 2026-08-14) — the audit's recipe, COMPLETE
 

@@ -137,77 +137,16 @@ LASER_SOURCES = frozenset({"nllb"})
 EXCLUDE = frozenset({"quran", "ccaligned", "religious"})
 SEED = 42
 
-# ── AFRIDOC RECOVERY ───────────────────────────────────────────────────────────
-# These two are re-cleaned from data/raw/csv_raw/ instead of being read from
-# data/processed/, because the shared clean() pipeline's script_purity step is
-# deleting a quarter of them for the wrong reason.
+# ── AFRIDOC ────────────────────────────────────────────────────────────────────
+# This experiment used to re-clean afridoc_health and afridoc_tech from
+# data/raw/csv_raw/ with a local copy of the pipeline, because the shared
+# script_purity step was deleting a quarter of both for the wrong reason. That
+# fix now lives where it belongs: process.clean.filters.SCRIPT_PURITY_EXEMPT
+# skips the step for these two sources, so data/processed/ already holds the
+# recovered rows and load_sources() just reads them like anything else.
 #
-# script_purity's Amharic rule is  [^ሀ-፿"'\./\(\)°º″0-9\s]  -- it fails any row
-# whose Amharic column contains a Latin letter. That is right for mined web text
-# and wrong for a medical/technical corpus, where Amharic legitimately embeds the
-# English term next to its translation:
-#
-#   "... የቀይ የደም ሴል አቅላሚ ንጥረ ነገር ( Haemoglobin) ያስፈልጋል ..."
-#   "... ባህሪ ያለው ( physiologic) ፍላጎቶች ..."      "ቫይታሚን B9(folate)"
-#
-# The same rule also forbids '%' and '-', so "40%" and "ከ6-59 ወር" fail, and the
-# English rule deletes 140 more rows purely for containing an en-dash. Every one
-# of these is a correct, well-aligned pair; the filter was removing exactly the
-# domain terminology that makes AfriDoc worth including. Measured cost:
-# health 9,925 -> 7,300 and tech 9,930 -> 7,364 at that single step.
-#
-# RECLEAN keeps the rest of the pipeline (normalize, length, paren_balance,
-# dedupe) and swaps only the script test: require the Amharic column to be
-# PREDOMINANTLY Ge'ez rather than free of Latin, after folding Unicode dashes and
-# quotes to ASCII. Recovers health 5,809 -> 9,798 and tech 6,040 -> 9,623.
-#
-# gezmu is deliberately NOT in this set: it loses only 2.7% to script_purity, and
-# its larger drop (140,349 -> 124,409) is dedupe collapsing repeated verses,
-# which is correct.
-#
-# COST, STATED: recovered rows carry no labse_score/africomet_score, since those
-# were computed against the old cleaned text. They therefore bypass the 0.15
-# floors. That is a small risk here and only here -- both floors drop exactly 0
-# of the 11,849 afridoc rows that DO carry scores, so there is no evidence either
-# floor does any work on this source.
-RECLEAN = frozenset({"afridoc_health", "afridoc_tech"})
-MIN_GEEZ_FRACTION = 0.5
+# Re-run `python -m process` to regenerate data/processed/ under the new rule.
 AMH_LEN, ENG_LEN = (5, 500), (10, 500)
-_UNICODE_FOLD = str.maketrans({"–": "-", "—": "-", "‘": "'", "’": "'",
-                               "“": '"', "”": '"', "…": "..."})
-
-
-def reclean(name: str) -> pd.DataFrame:
-    """Re-run the shared clean pipeline on one raw source with the relaxed script
-    test described above. Returns an am/en frame with no score columns."""
-    import re
-
-    import polars as pl
-
-    from process.clean.filters import dedupe, length_normalization, normalize, paren_balance
-    from process.utils.paths import CSV_RAW
-
-    geez, latin = re.compile(r"[ሀ-፿]"), re.compile(r"[A-Za-z]")
-
-    def predominantly_geez(s: str) -> bool:
-        g, l = len(geez.findall(s)), len(latin.findall(s))
-        return (g + l) == 0 or g / (g + l) >= MIN_GEEZ_FRACTION
-
-    df = pl.read_csv(str(CSV_RAW / f"{name}.csv"), infer_schema_length=0)
-    raw_n = len(df)
-    df = normalize(df, "am", "en", name)
-    df = length_normalization(df, "am", "en", AMH_LEN, ENG_LEN)
-    df = df.with_columns([
-        pl.col(c).map_elements(lambda s: s.translate(_UNICODE_FOLD), return_dtype=pl.Utf8)
-        for c in ("am", "en")
-    ])
-    before = len(df)
-    df = df.filter(pl.col("am").map_elements(predominantly_geez, return_dtype=pl.Boolean))
-    print(f"[clean]   {name}: relaxed script_purity: {before} → {len(df)} ({len(df) - before:+d})")
-    df = dedupe(paren_balance(df, "am", "en"), ("am",))
-    print(f"[clean]   {name}: re-cleaned from raw: {raw_n} → {len(df)} "
-          f"(processed/ has {len(pd.read_csv(PROCESSED / f'{name}.csv', usecols=['am'], dtype=str)):,})")
-    return df.select(["am", "en"]).to_pandas()
 
 # The pipeline default, and what v4 used — so the in-distribution number here is
 # at least measured the same WAY as v4's 26.39, even though it is measured on a
@@ -233,11 +172,6 @@ def load_sources() -> tuple[list[pd.DataFrame], dict]:
     for p in sorted(PROCESSED.glob("*.csv")):
         if p.stem in EXCLUDE:
             print(f"[clean] excluding {p.name} (see EXCLUDE)")
-            continue
-        if p.stem in RECLEAN:
-            df = reclean(p.stem)
-            survivors[p.stem] = len(df)
-            frames.append(df.assign(_source=p.stem))
             continue
         df = pd.read_csv(p, dtype=str)
         if not {"am", "en"}.issubset(df.columns):
