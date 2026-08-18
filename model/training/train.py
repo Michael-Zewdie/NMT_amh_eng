@@ -53,6 +53,17 @@ def run_eval(model, eval_loader, tgt_tokenizer, criterion, cfg, device, amp_dtyp
 
     # beam_size=1 regardless of cfg.inference.beam_size — periodic eval stays
     # greedy so a beam-4 config doesn't quadruple its cost. See evaluate_loader.
+    #
+    # DELIBERATE, re-confirmed 2026-08-17 when everything else moved to beam 4
+    # (model/rescore.py): measured, beam 4 on 3,000 sentences costs ~8 min per
+    # eval against greedy's ~2, so at eval_every_steps=5000 over 250k steps it
+    # would add ~5h to a run that currently takes 4-6h, and would break
+    # comparability with every val_bleu already logged.
+    #
+    # The consequence to remember: this bleu — and therefore manifest.json's
+    # best_val_bleu, and which checkpoint becomes best.pt — is a GREEDY number.
+    # It is not comparable to anything in results/benchmarks.csv or any
+    # experiment's results.json, all of which are beam 4.
     bleu = evaluate_loader(model, eval_loader, tgt_tokenizer, cfg, device, beam_size=1)
     model.train()
     return val_loss, bleu

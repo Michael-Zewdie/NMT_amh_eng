@@ -6,8 +6,8 @@ never trained on.
 Run (from the project root):
     python -m model.evaluate.evaluate_OOD <config> <checkpoint> <benchmark.csv> [split] [--show-worst N]
 
-e.g. python -m model.evaluate.evaluate_OOD model/configs/archive/base_v4.yaml \\
-         runs/am-en-base-v4/checkpoints/best.pt \\
+e.g. python -m model.evaluate.evaluate_OOD runs/am-en-clean-lower/config.yaml \\
+         runs/am-en-clean-lower/checkpoints/best.pt \\
          data/benchmarks/flores200_am_en.csv devtest --show-worst 20
 
 Always re-decodes from the checkpoint rather than trusting a stored hypothesis

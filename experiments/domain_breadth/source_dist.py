@@ -1,9 +1,9 @@
-"""Where the pairs in data/final_broad/ came from — by source, and inside NLLB by site.
+"""Where the pairs in the broad v1 corpus came from — by source, and inside NLLB by site.
 
 Run (from the project root): python -m experiments.domain_breadth chart [--top N]
 Outputs: <process.utils.paths.FIGS>/final_broad_sources.png (currently data/figs/)
 
-data/final_broad/*.csv carries only am/en — corpus.py drops the source column
+FINAL_BROAD/*.csv (archived 2026-08-17, see paths.py) carries only am/en — corpus.py drops the source column
 before writing — so provenance is recovered by joining each pair back against
 data/processed/*.csv on (am, en). The lookup dedupes keep-first over the sorted
 glob, mirroring process.pool.pool()'s own dedup, so a pair carried by two sources
@@ -167,7 +167,7 @@ def figure(tally: dict[str, int], total: int, sites: pl.DataFrame, top_n: int) -
                                          width_ratios=[1, 1.25])
     pie(ax_pie, tally, total)
     sites_bar(ax_bar, sites, tally.get("nllb", 0), top_n)
-    fig.suptitle(f"data/final_broad — where the pairs came from  (n={total:,})\n"
+    fig.suptitle(f"{FINAL_BROAD.name} — where the pairs came from  (n={total:,})\n"
                  f"{len(tally)} sources · gezmu excluded by construction",
                  fontsize=13, color=TEXT_PRIMARY, linespacing=1.8)
     fig.tight_layout()
@@ -184,7 +184,7 @@ def cmd_chart(args=None) -> None:
     print(f"  {'TOTAL':<{width}}  {total:>8,}")
     if tally.get("unattributed"):
         print(f"\n  note: {tally['unattributed']:,} pairs matched no processed source — "
-              f"data/final_broad/ is stale relative to data/processed/")
+              f"{FINAL_BROAD} is stale relative to data/processed/")
 
     nllb = tally.get("nllb", 0)
     if nllb:

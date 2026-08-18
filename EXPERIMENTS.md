@@ -2,7 +2,11 @@
 
 ## TL;DR
 
-Best model so far: **`am-en-base-v4` / `best.pt` (step 157,000)**
+Best model so far on the **cased** benchmark columns: **`am-en-base-v4` / `best.pt` (step 157,000)**
+— archived 2026-08-17, now at `archive/runs/am-en-base-v4/`, still scoreable in place
+(`archive/README.md`). On the case-insensitive comparison `am-en-clean-lower` (avg12)
+is ahead at 18.55 FLORES / 8.46 MAFAND; v4 holds this row only because it can emit
+capitals and clean-lower cannot. `model/translate.py` defaults to `am-en-clean-lower`.
 
 | metric | score |
 |---|---|
@@ -160,6 +164,51 @@ Both scorings are now computed in one pass and stored in `experiments/domain_bre
 `am-en-broad` is the **best OOD model at this data scale** — FLORES 11.78 vs `broad-8k`'s 10.73 on identical data, purely from preprocessing. Wall clock 4.27h (resumed once after a power outage at step 63,500; `best_bleu` was correctly restored, so nothing was lost). Full write-up in `results/domain_breadth_results.md`.
 
 **Renamed 2026-08-13.** These two runs were `am-en-gezmu-translit` and `am-en-broad-translit`; the code was `experiments/{gezmu,broad}_translit.py`. They are now `runs/am-en-{narrow,broad}` and `experiments/domain_breadth/{narrow,broad}.py`. Each `manifest.json` carries a `renamed_from` field, and both `train.log`s still print the old name — the numbers above are unchanged. Data and tokenizer dirs kept their `*_translit` names.
+
+### ⚠ The broad arm is ~34% religious register — and the code no longer says so
+
+Found 2026-08-16. `experiments/domain_breadth/corpus.py` declares `EXCLUDE = {gezmu, religious, quran, ccaligned}`, but that is **not** what built `data/final_broad/`. Its `manifest.json` records `excluded_sources: ["gezmu"]` and a pre-subsample pool of religious 147,048 / quran 37,068 / ccaligned 7,492 alongside nllb 338,334. On the trained 140k the mix was **nllb 62.6%, religious 27.1%, quran 6.9%, ccaligned 1.4%, afridoc 2.2%** (`results/domain_breadth_results.md`, measured from build-time `_source` labels). The four-way EXCLUDE was introduced when the script was restored from commit 0ffcabb; running `corpus --write` today would build a *different, register-disjoint* corpus and silently break comparability with everything above.
+
+**This does not weaken the result — it means the published gap is a floor.** Narrow is ~83% Watchtower/Bible and broad is ~34% religious, so the two arms overlap in register. A genuinely register-disjoint broad arm should widen the +6.23 FLORES, not shrink it. The docstring now carries this warning; the corpus on disk is the artifact of record.
+
+---
+
+## Experiment #5 (`am-en-broad-v2`, 2026-08-16) — the register-disjoint broad arm
+
+The rerun the note above called for. Same architecture, same 250,000 steps, same batch, same 8k shared Unigram, same Moses + AT4MT recipe, same beam 4 / lp 0.6, config chained from `am-en-narrow`'s own manifest — **every config key identical to narrow except `run_name` and the three data paths**. Size held at 145,363 so the match with the narrow arm survives. Four corpus changes:
+
+| change | effect |
+|---|---|
+| religious / quran / ccaligned dropped | arms now disjoint in register, not just in source file |
+| afridoc enters WHOLE | 19,497 rows (**13.4%**, up from 2.2%) — the `SCRIPT_PURITY_EXEMPT` fix recovered 5,093 |
+| LASER replaces the AfriCOMET-plus-subsample | `laser > 1.108`, the top 18.3% of nllb by alignment |
+| English lowercased | narrow / broad-v2 are now **both** case-free — the 2×2's model-side casing confound is gone, not corrected |
+
+`data/processed/nllb.csv` carries **no `africomet_score` column at all**, so v1's `africomet 0.8465` gate was a silent no-op and its selection was effectively random. That is what LASER replaces.
+
+### The 3×3, case-insensitive
+
+| model | test_gezmu | test_broad | test_broad_v2 | FLORES | MAFAND |
+|---|---|---|---|---|---|
+| **NARROW** | **32.07** | 12.17 | 16.96 | 6.22 | 4.23 |
+| **BROAD v1** | 14.72 | **20.09** | 29.01 | 12.46 | 5.95 |
+| **BROAD v2** | 17.68 | **24.73** | **29.28** | **14.53** | **6.84** |
+
+- **broad_v2 − narrow: FLORES +8.31, MAFAND +2.61.** The domain-breadth result holds and **strengthens** — v1 measured +6.23 / +1.72. Removing the register overlap widened the gap, exactly as the note above predicted.
+- **broad_v2 − broad_v1: FLORES +2.07, MAFAND +0.89**, at fixed size and fixed step count. Quality of selection beat the loss of source diversity.
+- **v2 wins on v1's own home ground: 24.73 vs 20.09 on `test_broad`** (+4.64). That cannot be explained by test-set difficulty, and is the strongest single line here.
+
+**Read the case-insensitive column only.** On the cased column v2 and v1 look identical on FLORES — 11.72 vs 11.78 — because v2 is lowercase and structurally cannot emit capitals while v1 could. The entire +2.07 is invisible in the cased table. This is the clearest demonstration yet of why the `_ci` correction was necessary.
+
+**`test_broad_v2` is an easier test set than `test_broad`** — every model scores higher on it (narrow 12.17 → 16.96, v1 20.09 → 29.01). So the diagonal is not comparable across arms; use FLORES, MAFAND, and `test_gezmu`, which are fixed.
+
+### A prediction on record that was wrong
+
+Before the run, the stated expectation was that broad_v2 would score **9–13 on `test_gezmu`**, down from v1's 14.72, on the reasoning that v1's cross-domain transfer was partly an artifact of its 34% religious share sitting in the same register as gezmu. Removing it should have cost transfer.
+
+It scored **17.68 — up 2.96, not down.** The named falsification condition (">16 on test_gezmu") was met. So v1's cross-domain transfer was **not** propped up by register overlap. Better-aligned mined data plus 6× the AfriDoc produced a model that transfers better even onto gezmu's own register, which it has never seen. Register overlap was diluting the broad arm rather than flattering it.
+
+FLORES 13–16 and a +7 to +10 gap over narrow were both predicted correctly (14.53, +8.31); the transfer direction was not.
 
 ---
 

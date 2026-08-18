@@ -13,14 +13,15 @@ authoritative record and still cite these runs' numbers.
 
 | kept | why |
 |---|---|
-| `runs/am-en-narrow` | experiment #3 narrow arm — in-domain 32.07 |
-| `runs/am-en-broad` | experiment #3 broad arm — **best OOD model**, FLORES 11.78 |
-| `experiments/domain_breadth/` | builds/trains both arms (`arms.py`) and owns the 2×2 eval (`evaluate.py`) |
-| `data/{final,prepared}_translit`, `data/{final,prepared}_broad_translit` | their data |
-| `data/tokenizer/shared_translit{,_broad}` | their vocabularies |
-| `runs/am-en-base-v4` | **best model in the project** — restored 2026-08-14, see below |
-| `data/prepared_v4_32k`, `data/tokenizer/{am,en}_32k_v4` | v4's data and vocabularies |
+| `runs/am-en-narrow` | experiment #3/#5 narrow arm — in-domain 32.07, the fixed baseline both broad arms are measured against |
+| `runs/am-en-broad-v2` | experiment #5 broad arm — **best OOD model**, FLORES 14.53 ci, supersedes broad v1 |
+| `runs/am-en-clean-lower` | the clean recipe — FLORES 18.55 ci / MAFAND 8.46 ci (avg12); `model/translate.py`'s default |
+| `experiments/domain_breadth/` | builds/trains the arms (`arms.py`) and owns the 3×3 eval (`evaluate.py`) |
+| `data/{final,prepared}_translit`, `data/{final,prepared}_broad_v2_translit`, `data/{final,prepared}_clean_lower` | their data |
+| `data/tokenizer/shared_translit{,_broad_v2,_clean_lower}` | their vocabularies |
 | `data/{raw,processed,scores,final,benchmarks}` | shared pipeline, not experiment leftovers — see below |
+
+`am-en-base-v4` and `am-en-broad` were **archived 2026-08-17** — see below.
 
 ## Datasets archived 2026-08-13
 
@@ -59,6 +60,63 @@ both current arms read at build *and* eval time), `processed/` (1.3G, input to
 many GPU-hours to rebuild), `final/` (referenced by 20 active modules incl.
 `paths.py`'s `FINAL`), `benchmarks/` (FLORES/MAFAND, needed by every eval), and
 `data/tokenizer/{am,en}` (1.8M, the live default in `model/common.py:25`).
+
+## `am-en-base-v4` and `am-en-broad` archived 2026-08-17
+
+Both superseded, 5.1G of checkpoints between them. Nothing deleted; both were
+**verified to load and decode from their archived paths** after the move.
+
+| moved | to |
+|---|---|
+| `runs/am-en-base-v4` | `archive/runs/am-en-base-v4` |
+| `data/prepared_v4_32k` | `archive/data/prepared_v4_32k` |
+| `data/tokenizer/{am,en}_32k_v4` | `archive/data/tokenizer/` |
+| `model/configs/base_v4.yaml` | `model/configs/archive/base_v4.yaml` |
+| `runs/am-en-broad` | `archive/runs/am-en-broad` |
+| `runs/broad_{build,eval,launch}.log` | `archive/runs/` |
+| `data/final_broad` | `archive/data/final_broad_translit` — **renamed**, see below |
+| `data/prepared_broad_translit` | `archive/data/prepared_broad_translit` |
+| `data/tokenizer/shared_translit_broad` | `archive/data/tokenizer/` |
+
+This reverses the 2026-08-14 restore of v4 recorded above. Both runs'
+`config.yaml` and `manifest.json`, and `model/configs/archive/base_v4.yaml`,
+were repointed at the archived data paths, so each stays scoreable in place:
+
+```
+python -m model.evaluate.evaluate_OOD archive/runs/am-en-base-v4/config.yaml \
+        archive/runs/am-en-base-v4/checkpoints/best.pt \
+        data/benchmarks/flores200_am_en.csv devtest
+```
+
+**Why v4:** `am-en-clean-lower` now dominates it — FLORES 18.55 / MAFAND 8.46
+case-insensitive against v4's 14.97 / 6.30, and even v4's own cased metric is
+within noise of clean-lower's 14.63 cased floor, which is a floor only because
+that model structurally cannot emit a capital letter. `model/translate.py`'s
+`DEFAULT_CONFIG` had already moved to `am-en-clean-lower`. EXPERIMENTS.md's TL;DR
+still names v4 on the cased FLORES column, which is accurate and unchanged — the
+model is archived, not demoted.
+
+**Why broad v1:** superseded by `am-en-broad-v2` on every fixed benchmark
+(FLORES 14.53 vs 12.46 ci, MAFAND 6.84 vs 5.95 ci) *and* on v1's own test split
+(24.73 vs 20.09), at matched size and matched steps. Experiment #5's write-up in
+EXPERIMENTS.md is the authoritative record.
+
+**`final_broad` → `final_broad_translit`:** `archive/data/final_broad` was
+already taken by `am-en-broad-old`'s v1 corpus (see the `-old` section below),
+so this one took the `*_translit` suffix its `prepared_`/tokenizer siblings
+already carry. Same rename-on-the-way-in as `prepared_broad_8k`.
+
+**One live dependency, deliberately kept pointing into the archive.**
+`experiments/domain_breadth/paths.py` still has a `broad` entry — `FINAL_BROAD`,
+`TOK_DIRS["broad"]` and `PREPARED_DIRS["broad"]` now resolve under
+`archive/data/`. `test_broad` is a published column of the 3×3, so `narrow` and
+`broad_v2` must keep scoring on it; only the *checkpoints* went away. `cmd_eval`
+already skips an arm with no `best.pt` and prints why, so re-running the eval
+today produces the 3×3 minus the BROAD v1 row. To get that row back:
+`mv archive/runs/am-en-broad runs/` and revert nothing else.
+
+`prepared_dir()` in that module now joins `ROOT` instead of `DATA`, since
+`PREPARED_DIRS` no longer holds `data/`-prefixed strings for every arm.
 
 ## The `-old` suffix
 
@@ -173,6 +231,25 @@ quran, its `CURATED_SOURCES` membership.
 its hyperparameters to the baseline. It falls back to `archive/runs/` when the
 run is not in `runs/`, so archiving does not break it — verified. Only the
 manifest is needed, not the checkpoints.
+
+## Dead code archived 2026-08-17
+
+Not superseded data or a superseded run — orphaned *code*, found by checking
+every `.py` file in the active tree for references from anything else.
+
+| moved | to | why |
+|---|---|---|
+| `model/transformer.py` | `archive/model/transformer.py` | stale duplicate of `model/architecture/transformer.py`; its own imports (`model.layers.decoder`) point at a package that doesn't exist, so it couldn't even run |
+| `model/tokenize/train_tokenizer.py` | `archive/model/tokenize/train_tokenizer.py` | v1's separate English ByteLevel-BPE tokenizer, writing to `data/tokenizer/en/` (now itself archived at `data/tokenizer/archive/en/`). Every experiment since the Gezmu-repro recipe fits one shared vocab inline (`arms.py`'s `cmd_build`) instead |
+| `model/tokenize/train_tokenizer_am.py` | `archive/model/tokenize/train_tokenizer_am.py` | same, Amharic Unigram side, `data/tokenizer/am/` |
+| `model/data/prepare.py` | `archive/model/data/prepare.py` | v1's `data/final/*.csv` → `data/prepared/am-en/*.pkl` step; `data/prepared/` (unsuffixed) no longer exists on disk, superseded by the same inline `cmd_build` |
+
+`model/common.py`'s `TOKENIZER_AM`/`TOKENIZER_EN` default path (`load_tokenizer`'s
+fallback when a run's config omits `data.src_tokenizer`) is untouched — it's a
+real fallback, just one no live run exercises anymore since `am-en-base-v4`
+(the last run that relied on it) was itself archived. `EXPERIMENTS.md` cites
+`train_tokenizer*.py` once, for a vocab-frequency analysis; that citation still
+resolves via `archive/`.
 
 ## Restoring
 

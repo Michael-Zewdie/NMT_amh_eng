@@ -1,35 +1,37 @@
-"""The 2x2: both models, both arms' test splits, both fixed benchmarks.
+"""am-en-narrow and am-en-broad-v2, each on its OWN test split + FLORES + MAFAND.
 
-This lives outside either arm on purpose. It is the comparison the experiment
-exists to make, so it belongs to neither half of it — previously it sat inside
-broad.py, which left narrow.py documenting that its counterpart owned its
-evaluation.
+Six decodes, always run together — the two arms in one invocation is the point,
+since the comparison between them is the experiment. Three numbers per model:
+own-domain fit, then the two shared benchmarks.
 
-Every score is decoded from RAW TEXT through the scoring model's OWN tokenizer,
-so a model can be scored against the other arm's test set even though the two
-arms have different vocabularies (arms.py explains why they must). That is the
-whole point of the 2x2, and it is not possible from the pre-tokenized .pkl
-caches, which are each encoded with one arm's vocabulary only.
+Two things this deliberately no longer does. It does not score the cross-domain
+cells (each model on the other's test split) that made this a 2x2: FLORES and
+MAFAND are already a shared yardstick held out from both arms, so the
+off-diagonal cells cost a decode pass each to answer a question the benchmark
+columns answer better. And it does not score broad v1 — superseded by the
+register-disjoint v2 rebuild and archived. Both sets of numbers stay in
+results.json and EXPERIMENTS.md; they are simply not re-computed.
+
+Every score is decoded from RAW TEXT through the model's own tokenizer rather
+than from the pre-tokenized .pkl caches, because the hypotheses have to be
+DETOKENIZED before scoring. That is what keeps these numbers comparable to
+am-en-gezmu-8k's: that baseline was trained and scored on natural English, while
+these models emit Moses-tokenized English, and scoring tokenized hypotheses
+against raw references would produce a gap that is pure preprocessing artifact.
 
 Both arms are scored with best.pt by default: am-en-narrow trained before
 checkpoint averaging was restored and has no rolling snapshots, so averaging one
 arm and not the other would compare a model against a handicapped opponent.
 
-CASE IS A CONFOUND HERE, so every cell is scored twice.
-Gezmu ships lowercased (0.0% of its English has any uppercase, train/dev/test
-alike); the broad corpus does not (91% of sentences start capitalised), and so
-do FLORES (98.7%) and MAFAND (92.1%). Nothing in the pipeline restores case --
-detok_en only rejoins punctuation -- so the narrow model emits lowercase forever.
-That hands narrow a free pass in-domain (lowercase output vs its own lowercase
-references) and penalises it out-of-domain (same output vs cased benchmarks),
-inflating the experiment's headline gap from BOTH ends. Measured ceiling: a
-PERFECT translation that is merely lowercase scores 80.1 BLEU on FLORES and 71.6
-on MAFAND, not 100.
-
-The `_ci` keys are the confound-free comparison. Retraining narrow on cased text
-is not an option -- Gezmu releases only the lowercased `*.base.*` files -- so
-case-insensitive scoring is the fix. Scoring is free next to decoding, so both
-are always computed; --lowercase only chooses which table is printed.
+CASE no longer splits the two arms -- Gezmu ships lowercased (0.0% of its English
+has any uppercase, train/dev/test alike) and broad_v2 is lowercased to match
+(arms.py), which is exactly why v1 was replaced. It still costs both of them the
+same way on the BENCHMARKS, which are cased (FLORES 98.7% capitalised, MAFAND
+92.1%): nothing in the pipeline restores case -- detok_en only rejoins
+punctuation -- so a PERFECT but lowercase translation tops out at 80.1 BLEU on
+FLORES and 71.6 on MAFAND, not 100. The `_ci` keys are the uncapped numbers.
+Scoring is free next to decoding, so both are always computed; --lowercase only
+chooses which table is printed.
 """
 import json
 
@@ -42,15 +44,23 @@ from model.common import load_for_inference
 from model.tokenize.preprocess import detok_en, translit_am
 from process.utils.paths import BENCHMARKS, RUNS
 
+# The comparison, and the whole of it. Broad v1 is not scored: its corpus and
+# tokenizer now live under archive/ (paths.py), it is superseded by the
+# register-disjoint v2 rebuild, and its published numbers are already in
+# EXPERIMENTS.md and results.json. It stays defined in arms.py so v1 remains
+# reproducible; it is simply not part of the comparison any more.
+EVAL_ARMS = ["narrow", "broad_v2"]
+
 # Result keys are frozen at the names the published numbers were written under
 # (EXPERIMENTS.md, results.json): the narrow arm's own test set is Gezmu's.
-TEST_LABELS = {"narrow": "test_gezmu", "broad": "test_broad"}
+TEST_LABELS = {"narrow": "test_gezmu", "broad_v2": "test_broad_v2"}
+ARM_LABELS = {"narrow": "NARROW (gezmu)", "broad_v2": "BROAD v2 (disjoint)"}
 BENCHMARK_SETS = [("flores", "flores200_am_en", "devtest"),
                   ("mafand", "mafand_en_amh", "test")]
 
 
 def score_model(arm_name: str, checkpoint: str) -> dict:
-    """Score one arm's model on both arms' test splits and both benchmarks."""
+    """Score one arm's model on its own test split and both benchmarks."""
     from model.evaluate.evaluate_OOD import encode_sources, translate
 
     arm = ARMS[arm_name]
@@ -60,13 +70,6 @@ def score_model(arm_name: str, checkpoint: str) -> dict:
     out = {}
 
     def score(label: str, am: list[str], refs: list[str]) -> None:
-        """Transliterate source, decode, DETOKENIZE, score against raw references.
-
-        Detokenizing is what keeps these numbers comparable to am-en-gezmu-8k's:
-        that baseline was trained and scored on natural English, while these
-        models emit Moses-tokenized English. Scoring tokenized hypotheses against
-        raw references would produce a gap that is pure preprocessing artifact.
-        """
         ids, _ = encode_sources(src_tok, [translit_am(s) for s in am], cfg.data.max_src_len)
         hyps = [detok_en(h) for h in translate(model, ids, tgt_tok, cfg, device)]
         lo_h, lo_r = [h.lower() for h in hyps], [r.lower() for r in refs]
@@ -80,9 +83,8 @@ def score_model(arm_name: str, checkpoint: str) -> dict:
               f"{out[label]['chrf++']:6.2f} chrF++   |  case-insensitive "
               f"{out[label]['bleu_ci']:6.2f} / {out[label]['chrf++_ci']:6.2f}", flush=True)
 
-    for other in ARMS.values():                       # own-domain and cross-domain
-        am, en = other.read("test")
-        score(TEST_LABELS[other.name], am, en)
+    am, en = arm.read("test")                          # own domain only
+    score(TEST_LABELS[arm_name], am, en)
     for name, f, sp in BENCHMARK_SETS:
         df = pd.read_csv(BENCHMARKS / f"{f}.csv", dtype=str).fillna("")
         df = df[df["split"] == sp].reset_index(drop=True)
@@ -92,34 +94,43 @@ def score_model(arm_name: str, checkpoint: str) -> dict:
 
 def cmd_eval(args) -> None:
     results = {}
-    for name, arm in ARMS.items():
+    for name in EVAL_ARMS:
+        arm = ARMS[name]
         if not (RUNS / arm.run / "checkpoints" / args.checkpoint).exists():
             print(f"[eval] {arm.run}: no {args.checkpoint} — skipping")
             continue
         results[arm.run] = score_model(name, args.checkpoint)
-    RESULTS.write_text(json.dumps(results, indent=2))
+
+    # Merged, not overwritten: results.json also holds the cross-domain cells and
+    # the broad v1 arm this command no longer scores. Those numbers are published
+    # in EXPERIMENTS.md and a re-run must not silently delete them.
+    on_disk = json.loads(RESULTS.read_text()) if RESULTS.exists() else {}
+    for run, scores in results.items():
+        on_disk.setdefault(run, {}).update(scores)
+    RESULTS.write_text(json.dumps(on_disk, indent=2))
 
     key = "bleu_ci" if getattr(args, "lowercase", False) else "bleu"
-    heading = ("case-INSENSITIVE (confound-free)" if key == "bleu_ci"
-               else "as-scored, cased (narrow is confounded — see module docstring)")
+    heading = ("case-INSENSITIVE" if key == "bleu_ci"
+               else "as-scored (both arms are lowercase; the cased benchmarks cap them "
+                    "at ~80 FLORES / ~72 MAFAND — see module docstring)")
     print(f"\n{heading}")
-    print(f"{'':26}{'own-domain':>14}{'cross-domain':>14}{'FLORES':>10}{'MAFAND':>10}")
-    print("-" * 74)
-    for name, arm in ARMS.items():
-        r = results.get(arm.run)
-        if r is None:
-            continue
-        other = next(o for o in ARMS if o != name)
-        label = "NARROW (gezmu)" if name == "narrow" else "BROAD (pooled)"
-        print(f"{label:<26}{r[TEST_LABELS[name]][key]:>14.2f}"
-              f"{r[TEST_LABELS[other]][key]:>14.2f}"
-              f"{r['flores'][key]:>10.2f}{r['mafand'][key]:>10.2f}")
-    if len(results) == len(ARMS):
-        n, b = ARMS["narrow"].run, ARMS["broad"].run
-        d_f = results[b]["flores"][key] - results[n]["flores"][key]
-        d_m = results[b]["mafand"][key] - results[n]["mafand"][key]
-        print(f"\nbroad - narrow:  FLORES {d_f:+.2f}   MAFAND {d_m:+.2f}"
-              f"   (experiment #2 at 140k: +6.37 / +2.50, cased)")
-        if key == "bleu":
-            print("re-run with --lowercase for the comparison that removes the casing confound")
+    scored = [n for n in EVAL_ARMS if ARMS[n].run in results]
+    head = ["own test", "FLORES", "MAFAND"]
+    print(f"{'':24}" + "".join(f"{h:>14}" for h in head))
+    print("-" * (24 + 14 * len(head)))
+    for name in scored:
+        r = results[ARMS[name].run]
+        cols = [TEST_LABELS[name], "flores", "mafand"]
+        row = "".join(f"{r[c][key]:>14.2f}" for c in cols)
+        print(f"{ARM_LABELS.get(name, name):<24}{row}")
+    print("\n(own test is each arm's OWN split — the column is not a shared set;"
+          "\n FLORES and MAFAND are held out from every arm and ARE comparable)")
+
+    if len(scored) == 2:
+        n, v = results[ARMS["narrow"].run], results[ARMS["broad_v2"].run]
+        print(f"\nbroad_v2 - narrow:  FLORES {v['flores'][key] - n['flores'][key]:+.2f}"
+              f"   MAFAND {v['mafand'][key] - n['mafand'][key]:+.2f}"
+              f"   <- the experiment, at fixed size and steps")
+    if key == "bleu":
+        print("\nre-run with --lowercase to lift the cased benchmarks' ceiling on both arms")
     print(f"\n-> {RESULTS}")

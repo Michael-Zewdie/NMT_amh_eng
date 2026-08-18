@@ -30,5 +30,11 @@ class Config(dict):
             raise AttributeError(f"no config key {key!r} — this section has: {', '.join(self)}") from None
 
 
-def load_config(path: str | Path) -> Config:
+def load_config(path: str | Path | Config) -> Config:
+    # An already-loaded Config passes through, so a caller that needs to patch a
+    # key before building the model (model.rescore forces inference.beam_size and
+    # resolves archived tokenizer dirs) can hand the object straight to
+    # model.common.load_for_inference instead of writing a temp yaml.
+    if isinstance(path, Config):
+        return path
     return Config(yaml.safe_load(Path(path).read_text()))

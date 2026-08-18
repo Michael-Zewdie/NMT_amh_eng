@@ -153,6 +153,13 @@ The strongest evidence that proximity matters is in the main table: on its own t
 | `am-en-broad` (broad, paper preprocessing) | `runs/am-en-broad/checkpoints/best.pt` | — | **experiment #3, training** |
 | `dd-{health,diverse}10k-s{1..5}` | `runs/dd-*/checkpoints/best.pt` | 10 × ~140M | `runs/dd-*/config.yaml` |
 
+**Paths above are as-of writing.** Of these, only `am-en-narrow` is still under
+`runs/`; `am-en-gezmu-8k`, `am-en-broad-8k`, the `dd-*` runs and — since
+2026-08-17 — `am-en-broad` and its corpus/vocabulary all live under
+`archive/runs/` and `archive/data/`. Each run's `config.yaml` was repointed on
+the way in, so prefixing the path with `archive/` is the whole of the fix. See
+`archive/README.md`.
+
 Both `config.yaml` files were reconstructed from each run's `manifest.json` on 2026-08-11 — the originals (`model/configs/broad_8k_matched.yaml`, `gezmu_8k.yaml`) were deleted in a refactor. `runs/` and `data/` are gitignored.
 
 **Reproduce:** `python -m experiments.domain_dist_10k {build,train,eval,report}` (10k arms) · `python -m experiments.domain_breadth {build,train} --arm narrow|broad` then `python -m experiments.domain_breadth eval` (experiment #3, incl. the full 2×2). Scores in `experiments/domain_dist_10k_results.json`, `runs/am-en-narrow/results.json`, `experiments/domain_breadth/results.json`.

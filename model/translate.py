@@ -41,7 +41,7 @@ from model.search.decode import decode
 from model.tokenize.preprocess import detok_en, translit_am
 from process.clean.normalize import normalize
 
-DEFAULT_CONFIG = "runs/am-en-broad/config.yaml"
+DEFAULT_CONFIG = "runs/am-en-clean-lower/config.yaml"
 
 # Any Amharic sentence works; this one is only ever fed to the tokenizer.
 _PROBE = "የኢትዮጵያ መንግሥት አዲስ ፖሊሲ አስታወቀ ።"

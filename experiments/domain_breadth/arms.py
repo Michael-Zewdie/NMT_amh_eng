@@ -4,8 +4,11 @@ ARMS below is the whole of what differs between them: where the text comes from,
 and which finished run's manifest supplies the hyperparameters. Everything else
 in this package takes `arm` only as a string it looks up here.
 
-    NARROW  Gezmu et al.'s own 140k split — one register, ~83% Watchtower/Bible
-    BROAD   the 6 other sources pooled and size-matched (corpus.py), gezmu excluded
+    NARROW    Gezmu et al.'s own 140k split — one register, ~83% Watchtower/Bible
+    BROAD     v1, FROZEN: the 6 other sources pooled and size-matched, gezmu excluded
+              — but ~34% religious/quran, so it overlaps NARROW's register
+    BROAD_V2  the register-disjoint rebuild: nllb (LASER-gated) + all of afridoc,
+              English LOWERCASED so all three arms are finally case-matched
 
 Vocabulary is fit FRESH PER ARM rather than shared. That is deliberate and is the
 opposite of experiments.stratification, which fits one vocab for all three of its
@@ -31,7 +34,7 @@ from typing import Callable
 import pandas as pd
 
 from experiments.domain_breadth.paths import (
-    FINAL_BROAD, GEZMU, PREPARED_DIRS, RUN_NAMES, TOK_DIRS, prepared_dir,
+    FINAL_BROAD, FINAL_BROAD_V2, GEZMU, PREPARED_DIRS, RUN_NAMES, TOK_DIRS, prepared_dir,
 )
 from model.common import BOS_ID, EOS_ID
 from model.tokenize.preprocess import moses_en, translit_am
@@ -60,12 +63,21 @@ def read_broad(split: str) -> tuple[list[str], list[str]]:
     return df["am"].tolist(), df["en"].tolist()
 
 
+def read_broad_v2(split: str) -> tuple[list[str], list[str]]:
+    df = pd.read_csv(FINAL_BROAD_V2 / f"{split}.csv", usecols=["am", "en"], dtype=str).dropna()
+    return df["am"].tolist(), df["en"].tolist()
+
+
 @dataclass(frozen=True)
 class Arm:
     name: str
     read: Callable[[str], tuple[list[str], list[str]]]
     config_from: str                          # run whose manifest pins the hyperparameters
     overrides: dict = field(default_factory=dict)   # cfg tweaks applied on top
+    lowercase: bool = False                   # lowercase the English target before fitting
+
+    # Amharic is never lowercased and does not need to be: AT4MT transliteration
+    # already emits all-lowercase Latin. Only the English side is affected.
 
     @property
     def run(self) -> str:
@@ -86,6 +98,16 @@ ARMS = {
                   # uses them, and broad inherits this through narrow's manifest.
                   overrides={"model": {"tie_embeddings": True}}),
     "broad":  Arm("broad", read_broad, config_from=RUN_NAMES["narrow"]),
+    # Register-disjoint rebuild (corpus.py): no religious/quran/ccaligned, all of
+    # afridoc, nllb gated on LASER. Same hyperparameters as broad — it chains the
+    # same manifest — so the only difference from v1 is the corpus.
+    # lowercase=True removes the last confound in the trio: narrow trains on Gezmu's
+    # lowercased release and clean-lower lowercases deliberately, so v1 broad was the
+    # only cased arm and every comparison had to be corrected after the fact. With
+    # this arm lowercased, narrow / broad_v2 / clean-lower are all case-free and the
+    # cased column stops being a trap.
+    "broad_v2": Arm("broad_v2", read_broad_v2, config_from=RUN_NAMES["narrow"],
+                    lowercase=True),
 }
 
 
@@ -119,11 +141,15 @@ def cmd_build(args) -> None:
     splits, example = {}, None
     for split in SPLITS:
         am, en = arm.read(split)
-        splits[split] = ([translit_am(s) for s in am], [moses_en(s) for s in en])
+        tgt = [moses_en(s) for s in en]
+        if arm.lowercase:
+            tgt = [s.lower() for s in tgt]
+        splits[split] = ([translit_am(s) for s in am], tgt)
         if split == "train":
             example = am[0]        # kept from this read; re-reading train to print
                                    # one line costs a full re-parse of the corpus
-        print(f"[build] {split}: {len(am):,} pairs Moses-tokenized + transliterated", flush=True)
+        print(f"[build] {split}: {len(am):,} pairs Moses-tokenized + transliterated"
+              f"{' + lowercased' if arm.lowercase else ''}", flush=True)
     print(f"[build]   example: {example[:55]}")
     print(f"[build]        -> {splits['train'][0][0][:55]}")
 

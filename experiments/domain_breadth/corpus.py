@@ -1,14 +1,34 @@
-"""Builds data/final_broad/ — the BROAD arm's corpus.
-
-Restored from commit 0ffcabb (`experiments/broad_8k_matched.py`), which built the
-CSVs on disk but was dropped in an earlier refactor, leaving data/final_broad/
-unreproducible.
+"""Builds data/final_broad_v2/ — the BROAD arm's corpus, register-disjoint rebuild.
 
     python -m experiments.domain_breadth corpus            # report counts only
     python -m experiments.domain_breadth corpus --write    # commit the split
 
-Tune the CUTOFFS block below, run without --write to see how many pairs survive,
-repeat until the total is at or a little above TARGET_TOTAL, then --write.
+WHY V2 EXISTS
+-------------
+`data/final_broad/` (v1) is FROZEN: it is the corpus `am-en-broad` trained on and
+every published number traces to it. Its manifest records `excluded_sources:
+["gezmu"]` and a pool of religious 147,048 / quran 37,068 / ccaligned 7,492
+alongside nllb 338,334 — the trained 140k came out nllb 62.6%, religious 27.1%,
+quran 6.9%, ccaligned 1.4%, afridoc 2.2%. Roughly a THIRD religious register, the
+same register as the narrow arm it is contrasted against, which blunts the very
+contrast the experiment measures. So the published +6.23 FLORES is a floor.
+
+v2 removes that overlap and fixes two other things found alongside it:
+
+    religious/quran/ccaligned OUT   arms become disjoint in register, not just in
+                                    source file
+    afridoc enters WHOLE            19,497 rows, up from 14,404 — the script_purity
+                                    exemption recovered 5,093 the old filter ate.
+                                    13% of the corpus, against v1's 2.2%
+    LASER replaces the subsample    v1 gated nllb on africomet 0.8465, a number
+                                    picked to hit a row target, then randomly
+                                    trimmed. nllb carries no africomet_score at all,
+                                    so that gate was a no-op and selection was
+                                    effectively random. LASER_FLOOR selects the
+                                    best-aligned rows instead.
+
+Size stays matched to the narrow arm (145,363) — that control is what makes the
+comparison mean anything, and LASER_FLOOR is tuned to land there.
 
 Design: one arm, size-matched to the already-finished narrow arm (am-en-gezmu-8k)
 rather than rebuilding both. gezmu.csv is EXCLUDED rather than down-weighted, so
@@ -32,26 +52,33 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from experiments.domain_breadth.paths import FINAL_BROAD
+from experiments.domain_breadth.paths import FINAL_BROAD_V2
 from process import pool as pool_mod
 from process.utils.paths import PROCESSED
 
 # ── CUTOFFS ────────────────────────────────────────────────────────────────────
-# Per source, not uniform. AfriCOMET is not calibrated across registers, so one
-# shared floor across sources of different register is a register filter wearing a
-# quality filter's clothes (see process.process's CURATED_AFRICOMET_CUTOFF note).
-# With the curated religious corpora now excluded that hazard is mostly moot here,
-# but the per-source shape is kept: it is what makes the afridoc corpora survivable
-# alongside a 0.85-ish mined floor.
+# LASER IS THE SIZE DIAL, not AfriCOMET plus a random subsample. v1 gated nllb on
+# africomet 0.8465 — a number chosen to hit TARGET_TOTAL rather than for any quality
+# reason — and then randomly trimmed the overshoot. Both halves of that are gone:
 #
-# To reproduce the corpus currently on disk instead, use the production tiering over
-# all six sources: africomet 0.80 / labse 0.70 for nllb+ccaligned, africomet 0.15 /
-# labse 0.0 for the rest, which yields 541k and then randomly subsamples to target.
+#   * data/processed/nllb.csv carries NO africomet_score column at all, so the v1
+#     floor was silently a no-op and the selection was effectively random.
+#   * LASER is the only score in this pipeline that can see mined misalignment
+#     (v4 audit: misalignment falls 38.2% -> 4.1% across LASER deciles). Using it as
+#     the dial means the rows that survive are the best-aligned ones, not an
+#     arbitrary sample.
+#
+# LASER_FLOOR is tuned so nllb + ALL of afridoc lands just above TARGET_TOTAL:
+# 1.108 keeps 129,547 nllb (the top 18.3% by alignment) for 149,044 total against a
+# 145,363 target. The distribution is steep and truncated (1.080-1.250, median
+# 1.0914), so this floor is sensitive — 1.100 gives 207k and 1.112 gives ~100k.
 AFRICOMET = {
-    "nllb":           0.8465,  # set by TARGET_TOTAL, not by taste — see EXCLUDE below
+    "nllb":           0.0,     # no africomet_score column on nllb; LASER_FLOOR is the gate
     "afridoc_health": 0.0,     # 0.0 disables the floor (apply_cutoffs skips it): these two
-    "afridoc_tech":   0.0,     # are small and curated, so all ~11.4k rows are kept.
+    "afridoc_tech":   0.0,     # are curated, and now enter WHOLE — all 19,497 rows.
 }
+LASER_FLOOR = 1.108
+LASER_SOURCES = frozenset({"nllb"})
 LABSE = {
     # No nllb entry: a LaBSE floor on nllb is a no-op by construction. score_labse
     # leaves labse_score NaN wherever laser_score already exists (score_cache's
@@ -61,22 +88,34 @@ LABSE = {
     "afridoc_health": 0.0,     # curated: LaBSE's tail here is not separable — correct
     "afridoc_tech":   0.0,     # rows score as low as real misalignments, so no floor works.
 }
-SOURCE_LID = 0.90             # uniform: a sanity check (is this row am/en), not a quality judgment
-TARGET_LID = 0.90
+# LID is per-source now, and DISABLED on the curated tier — the v4 audit found a 0.90
+# floor there is a LENGTH artifact, not an am/en sanity check: the rows it drops have
+# median Amharic length 14-15 chars against 53-83 for the rows it keeps, and hand
+# inspection found them correctly aligned. It was costing 4.4% of afridoc_tech and
+# 2.8% of afridoc_health. On mined text it still does the job it was written for.
+# (Moot in practice for the re-cleaned afridoc CSVs, which carry no LID columns yet —
+# apply_cutoffs skips a floor whose column is absent — but stated so the intent does
+# not depend on which score stages last ran.)
+SOURCE_LID = {"nllb": 0.90, "afridoc_health": 0.0, "afridoc_tech": 0.0}
+TARGET_LID = {"nllb": 0.90, "afridoc_health": 0.0, "afridoc_tech": 0.0}
 
-# religious/quran/ccaligned are excluded alongside gezmu. The first two matter most:
-# the NARROW arm is ~83% Watchtower/Bible, so keeping a 34% religious+quran share in
-# the BROAD arm put the same register on both sides of the comparison and blunted the
-# contrast the experiment is trying to measure. Dropping them makes the arms cleanly
-# disjoint in register, not merely in source file.
+# religious/quran/ccaligned are excluded alongside gezmu — BUT NOT IN THE RUN THAT
+# WAS SCORED. See the ⚠ block in the module docstring: am-en-broad trained on a
+# corpus that excluded gezmu only, and was ~34% religious+quran+ccaligned.
 #
-# The cost is stated rather than hidden: what remains (nllb + afridoc) cannot reach
-# TARGET_TOTAL at a 0.86 AfriCOMET floor — it tops out near 103k — so nllb's floor is
-# lowered to 0.8465 to keep the size match with the narrow arm, which is a control the
-# experiment cannot give up. That trades a little mined-row quality for size parity,
-# and leaves the corpus ~92% nllb. Whether that is still "broad" is a question about
-# NLLB's internal site spread, which is exactly what source_dist.py's right-hand panel
-# now measures.
+# The reason to exclude them on a rerun: the NARROW arm is ~83% Watchtower/Bible, so
+# a 34% religious+quran share in the BROAD arm puts the same register on both sides
+# of the comparison and blunts the contrast the experiment is trying to measure.
+# Dropping them makes the arms cleanly disjoint in register, not merely in source
+# file. That is a better experiment — it has simply never been run.
+#
+# The size match with the narrow arm is kept — it is the control the experiment
+# cannot give up — but LASER_FLOOR now buys it instead of a lowered AfriCOMET floor
+# plus a random trim. The corpus lands ~87% nllb / ~13% afridoc, against v1's 92%/2.2%:
+# afridoc goes in whole (19,497 rows after the script_purity exemption recovered
+# 5,093 of them) because it is curated text and every floor on it was measured to
+# subtract only. Whether ~87% nllb is still "broad" is a question about NLLB's
+# internal site spread, which source_dist.py's right-hand panel measures.
 #
 # Re-including a source means restoring its AFRICOMET/LABSE entry; load_sources exits
 # with a clear message if one is missing.
@@ -95,8 +134,13 @@ RATIOS = (GEZMU_TRAIN / TARGET_TOTAL, GEZMU_VAL / TARGET_TOTAL, GEZMU_TEST / TAR
 def load_sources() -> list[pd.DataFrame]:
     """Every processed am/en source except EXCLUDE, filtered by its own cutoffs.
 
-    Calls apply_cutoffs directly rather than pool.load_pairs so africomet_score
-    survives into the frame — the overshoot trim needs it. Dropped before writing.
+    Calls apply_cutoffs directly rather than pool.load_pairs so `_laser` survives into
+    the frame — the overshoot trim ranks on it. Dropped before writing.
+
+    Curated rows carry no laser_score, so `_laser` is NaN for them and the trim treats
+    NaN as +inf: afridoc is never the thing that gets cut. That is deliberate. It is the
+    scarce tier (19,497 rows against nllb's 129,547) and the whole point of this rebuild
+    is to keep all of it; trimming it to hit a row target would undo the change.
     """
     frames = []
     for p in sorted(PROCESSED.glob("*.csv")):
@@ -111,11 +155,20 @@ def load_sources() -> list[pd.DataFrame]:
         if p.stem not in AFRICOMET:
             sys.exit(f"[broad] {p.name} has no AFRICOMET entry — add one, or add it to "
                      f"EXCLUDE (a new source appeared in {PROCESSED})")
+        before = len(df)
+        if p.stem in LASER_SOURCES:
+            if "laser_score" not in df.columns:
+                sys.exit(f"[broad] {p.name} is in LASER_SOURCES but carries no laser_score")
+            df = df[pd.to_numeric(df["laser_score"], errors="coerce") > LASER_FLOOR]
+            print(f"[broad]   {p.stem}: laser_score>{LASER_FLOOR}: {before} → {len(df)} "
+                  f"({len(df) - before:+d})")
         # A missing LABSE entry means no LaBSE gate, which is the right default: only
         # sources whose rows actually carry labse_score can be filtered on it.
         df = pool_mod.apply_cutoffs(df, p.stem, LABSE.get(p.stem, 0.0), AFRICOMET[p.stem],
-                                    SOURCE_LID, TARGET_LID)
-        frames.append(df[["am", "en", "africomet_score"]].assign(_source=p.stem))
+                                    SOURCE_LID.get(p.stem, 0.0), TARGET_LID.get(p.stem, 0.0))
+        laser = (pd.to_numeric(df["laser_score"], errors="coerce")
+                 if "laser_score" in df.columns else pd.Series(float("nan"), index=df.index))
+        frames.append(df[["am", "en"]].assign(_laser=laser, _source=p.stem))
     if not frames:
         raise ValueError(f"no am/en sources survived in {PROCESSED}")
     return frames
@@ -155,32 +208,34 @@ def cmd_corpus(args) -> None:
         # trim becomes the real selector and will preferentially delete the curated
         # sources — retune AFRICOMET instead of leaning on it.
         pct = over / len(pooled)
-        print(f"[broad] over by {over:,} ({pct:.1%}) — dropping the lowest-scoring {over:,}")
+        print(f"[broad] over by {over:,} ({pct:.1%}) — dropping the lowest-LASER {over:,}")
         if pct > 0.10:
-            print(f"[broad] WARNING: trimming {pct:.0%} globally will skew the source mix "
-                  f"toward whichever source scores highest (nllb). Tighten AFRICOMET.")
-        pooled = (pooled.assign(_afc=pd.to_numeric(pooled["africomet_score"], errors="coerce"))
-                  .sort_values("_afc", ascending=False, kind="mergesort")
-                  .head(TARGET_TOTAL).drop(columns="_afc")
+            print(f"[broad] WARNING: trimming {pct:.0%} means LASER_FLOOR is set too low "
+                  f"and this trim, not the floor, is doing the selecting. Raise it.")
+        # NaN (curated, no laser_score) sorts as +inf, so only mined rows are ever cut.
+        pooled = (pooled.assign(_rank=pooled["_laser"].fillna(float("inf")))
+                  .sort_values("_rank", ascending=False, kind="mergesort")
+                  .head(TARGET_TOTAL).drop(columns="_rank")
                   .sample(frac=1, random_state=SEED).reset_index(drop=True))
         report(pooled, "after trim")
 
-    floors = {s: round(float(pd.to_numeric(g["africomet_score"], errors="coerce").min()), 4)
+    floors = {s: (None if g["_laser"].isna().all()
+                  else round(float(g["_laser"].min()), 4))
               for s, g in pooled.groupby("_source", sort=True)}
-    print(f"\n[broad] effective AfriCOMET floors: {floors}")
+    print(f"\n[broad] effective LASER floors: {floors}  (None = curated, no laser_score)")
 
     if not args.write:
         print("\n[broad] report only — re-run with --write to commit")
         return
 
-    FINAL_BROAD.mkdir(parents=True, exist_ok=True)
-    original, pool_mod.FINAL = pool_mod.FINAL, FINAL_BROAD
+    FINAL_BROAD_V2.mkdir(parents=True, exist_ok=True)
+    original, pool_mod.FINAL = pool_mod.FINAL, FINAL_BROAD_V2
     try:
         splits = pool_mod.split(pooled[["am", "en"]], ratios=RATIOS, seed=SEED)
     finally:
         pool_mod.FINAL = original
 
-    (FINAL_BROAD / "manifest.json").write_text(json.dumps({
+    (FINAL_BROAD_V2 / "manifest.json").write_text(json.dumps({
         "arm": "broad",
         "experiment": "domain_breadth",
         "counterpart_run": "am-en-narrow",
@@ -198,5 +253,5 @@ def cmd_corpus(args) -> None:
         "split_sizes": {k: len(v) for k, v in splits.items()},
         "seed": SEED,
     }, indent=2))
-    print(f"\n[broad] wrote {FINAL_BROAD} — {({k: len(v) for k, v in splits.items()})}")
+    print(f"\n[broad] wrote {FINAL_BROAD_V2} — {({k: len(v) for k, v in splits.items()})}")
     print("[broad] next: python -m experiments.domain_breadth build --arm broad")
